@@ -1,0 +1,29 @@
+# FastAPI и веб-сервер
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+
+# База данных
+sqlalchemy==2.0.23
+alembic==1.12.1
+psycopg2-binary==2.9.9
+
+# Кэширование
+redis==5.0.1
+
+# Telegram Bot
+python-telegram-bot==20.7
+
+# Валидация данных
+pydantic==2.5.0
+
+# Конфигурация
+python-dotenv==1.0.0
+
+# HTTP клиент для внешних API
+httpx==0.25.2
+
+# Логирование
+structlog==23.2.0
+
+# Утилиты
+python-multipart==0.0.6
