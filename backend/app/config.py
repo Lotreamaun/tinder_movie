@@ -24,6 +24,9 @@ class Settings:
     APP_PORT: int = int(os.getenv("APP_PORT", "8000"))
     APP_DEBUG: bool = os.getenv("APP_ENV", "development") == "development"
     
+    # CORS / Frontend
+    FRONTEND_ORIGIN: str = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
+    
     # Безопасность
     SECRET_KEY: str = os.getenv("SECRET_KEY", "change-me-in-production")
     JWT_SECRET: str = os.getenv("JWT_SECRET", "change-me-in-production")

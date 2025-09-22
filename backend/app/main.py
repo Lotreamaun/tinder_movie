@@ -6,6 +6,22 @@ from dotenv import load_dotenv
 
 from app.config import settings
 from app.logging_config import setup_logging
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+app = FastAPI(title="Movie Tinder API", debug=settings.APP_DEBUG)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[settings.FRONTEND_ORIGIN],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.get("/health")
+def health_check():
+    return {"status": "ok"}
 
 
 def main():
