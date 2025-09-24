@@ -49,6 +49,26 @@ cd backend
 python -m app.main
 ```
 
+### 5. Локальный запуск Telegram-бота
+
+Бот запускается опционально по флагу окружения `RUN_BOT`.
+
+1) Убедитесь, что `.env` в корне проекта содержит:
+```
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
+RUN_BOT=1
+```
+2) Используйте виртуальное окружение backend и запустите приложение:
+```bash
+cd backend
+python -m venv .venv
+source .venv/bin/activate  # macOS/Linux
+# или: .venv\Scripts\activate  # Windows
+pip install -r requirements.txt
+python -m app.main
+```
+3) Проверьте в Telegram команды `/start` и `/help`.
+
 ## Структура проекта
 
 ```
@@ -72,7 +92,8 @@ tinder_movie/
 
 ### Текущий статус
 - **Итерация 1:** Настройка проекта ✅
-- **Итерация 2:** Базовая структура FastAPI ⏳
+- **Итерация 2:** Базовая структура FastAPI ✅
+- **Итерация 3:** Telegram бот (базовый) ✅
 
 ## Лицензия
 

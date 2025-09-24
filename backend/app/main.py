@@ -3,6 +3,7 @@
 """
 import os
 from dotenv import load_dotenv
+from app.bot.handlers import run_polling
 
 from app.config import settings
 from app.logging_config import setup_logging
@@ -44,6 +45,10 @@ def main():
     
     print("Приложение запущено")
     logger.info("Приложение успешно запущено")
+
+    # Опциональный запуск Telegram-бота по флагу окружения
+    if os.getenv("RUN_BOT") == "1":
+        run_polling()
 
 
 if __name__ == "__main__":

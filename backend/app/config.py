@@ -3,7 +3,10 @@
 """
 import os
 from typing import Optional
+from dotenv import load_dotenv
 
+# Загружаем переменные окружения ДО создания settings
+load_dotenv()
 
 class Settings:
     """Настройки приложения"""
