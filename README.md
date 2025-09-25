@@ -49,7 +49,28 @@ cd backend
 python -m app.main
 ```
 
-### 5. Локальный запуск Telegram-бота
+### 5. База данных и миграции (локально)
+
+1) Убедитесь, что у вас доступен PostgreSQL локально и задан `DATABASE_URL` в `.env` (корень репозитория):
+```
+DATABASE_URL=postgresql://user:password@localhost:5432/tinder_movie
+```
+
+2) Примените миграции Alembic из корня репозитория:
+```bash
+alembic upgrade head
+```
+
+3) (Опционально) Быстрая проверка записи пользователя:
+```bash
+cd backend
+python -m app.scripts.verify_user_insert
+```
+Ожидаемо: при первом запуске создастся пользователь, при втором — будет сообщение, что пользователь уже существует.
+
+Примечание: файл `alembic.ini` находится в корне и указывает на `backend/app/migrations`.
+
+### 6. Локальный запуск Telegram-бота
 
 Бот запускается опционально по флагу окружения `RUN_BOT`.
 
