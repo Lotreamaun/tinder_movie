@@ -65,3 +65,5 @@ def setup_logging(log_level: str = "INFO", log_file: str = "logs/app.log") -> lo
     logger.addHandler(error_handler)
     
     return logger
+
+logger = setup_logging()

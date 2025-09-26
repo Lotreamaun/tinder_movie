@@ -8,6 +8,10 @@ from app.bot.handlers import run_polling
 from app.config import settings
 from app.logging_config import setup_logging
 from fastapi import FastAPI
+from .api.users import router as users_router
+from .api.swipes import router as swipes_router
+from .api.movies import router as movies_router
+from .api.matches import router as matches_router
 from fastapi.middleware.cors import CORSMiddleware
 app = FastAPI(title="Movie Tinder API", debug=settings.APP_DEBUG)
 
@@ -19,6 +23,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(users_router)
+app.include_router(swipes_router)
+app.include_router(movies_router)
+app.include_router(matches_router)
+
+@app.get("/")
+def read_root():
+    return {
+        "message": "Hello from FastAPI",
+        "docs": "/docs"
+        }
 
 @app.get("/health")
 def health_check():
