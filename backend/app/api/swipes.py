@@ -69,7 +69,7 @@ def create_swipe(
         )
 
 @router.get("/user/{user_id}", response_model=ApiResponse[list[SwipeResponse]])
-async def get_user_swipes(user_id: UUID) -> ApiResponse[list[SwipeResponse]]:
+def get_user_swipes(user_id: UUID, db: Session = Depends(get_db)) -> ApiResponse[list[SwipeResponse]]:
     """
     Получение всех свайпов пользователя.
     
@@ -84,11 +84,11 @@ async def get_user_swipes(user_id: UUID) -> ApiResponse[list[SwipeResponse]]:
     """
     try:
         # Проверяем существование пользователя
-        user = await user_service.get_user(user_id)
+        user = user_service.get_user_by_id(db=db, id=str(user_id))
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
             
-        swipes = await swipe_service.get_user_swipes(user_id)
+        swipes = swipe_service.list_user_swipes(db=db, user_id=str(user_id))
         return ApiResponse(success=True, data=swipes)
         
     except HTTPException:
