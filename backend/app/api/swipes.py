@@ -1,10 +1,9 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Header
 from uuid import UUID
 from typing import Annotated
-from fastapi import Depends
 from sqlalchemy.orm import Session
-from ..database import get_db
 
+from ..database import get_db
 from ..services.swipe_service import swipe_service
 from ..services.user_service import user_service
 from .schemas import SwipeCreate, SwipeResponse, ApiResponse
@@ -12,23 +11,38 @@ from ..logging_config import logger
 
 router = APIRouter(prefix="/api/swipes", tags=["swipes"])
 
-@router.post("/", response_model=ApiResponse[SwipeResponse])
-def create_swipe(swipe: SwipeCreate, db: Session = Depends(get_db)) -> ApiResponse[SwipeResponse]:
+@router.post("/", response_model=ApiResponse[SwipeResponse], responses={
+    404: {"description": "Пользователь не найден"},
+    400: {"description": "Некорректные данные свайпа"},
+    500: {"description": "Внутренняя ошибка сервера"}
+})
+def create_swipe(
+    swipe: SwipeCreate,
+    telegram_id: Annotated[int, Header(description="Telegram ID пользователя")],
+    db: Session = Depends(get_db)
+) -> ApiResponse[SwipeResponse]:
     """
     Создание нового свайпа.
     
     Args:
         swipe (SwipeCreate): Данные свайпа
+        telegram_id (int): Telegram ID пользователя из заголовка запроса
+        db (Session): Сессия базы данных
         
     Returns:
         ApiResponse[SwipeResponse]: Созданный свайп
         
     Raises:
-        HTTPException: Если фильм не найден или возникла другая ошибка
+        HTTPException: Если пользователь не найден, фильм не найден или возникла другая ошибка
     """
     try:
+        # Получаем пользователя по telegram_id
+        user = user_service.get_user_by_telegram_id(db, telegram_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
         # Создаем свайп
-        db_swipe = swipe_service.create_swipe(db=db, **swipe.model_dump())
+        db_swipe = swipe_service.create_swipe(db=db, **swipe.model_dump(), user_id=str(user.id))
         
         # Проверяем на матч если это лайк
         if swipe.swipe_type == 'like':

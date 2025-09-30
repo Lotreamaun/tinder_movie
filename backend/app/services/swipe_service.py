@@ -41,4 +41,31 @@ class SwipeService:
         )
         return db.execute(stmt).scalar_one_or_none()
 
+    def check_match(self, db: Session, movie_id: str, group_participants: list[int]) -> bool:
+        """
+        Проверяет, поставили ли все участники группы лайк фильму.
+        
+        Args:
+            db (Session): Сессия БД
+            movie_id (str): ID фильма
+            group_participants (list[int]): Список telegram_id участников группы
+            
+        Returns:
+            bool: True если все участники лайкнули фильм, False иначе
+        """
+        stmt = select(UserSwipe).where(
+            and_(
+                UserSwipe.movie_id == movie_id,
+                UserSwipe.swipe_type == 'like',
+                UserSwipe.group_participants == group_participants
+            )
+        )
+        likes = db.execute(stmt).scalars().all()
+        
+        # Считаем уникальных пользователей, поставивших лайк
+        unique_users = set(like.user_id for like in likes)
+        
+        # Матч, если количество уникальных лайков равно количеству участников
+        return len(unique_users) == len(group_participants)
+
 swipe_service = SwipeService()
