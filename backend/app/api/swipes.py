@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..services.swipe_service import swipe_service
 from ..services.user_service import user_service
+from ..services.match_service import match_service
 from .schemas import SwipeCreate, SwipeResponse, ApiResponse
 from ..logging_config import logger
 
@@ -47,11 +48,14 @@ def create_swipe(
         # Проверяем на матч если это лайк
         if swipe.swipe_type == 'like':
             match_found = swipe_service.check_match(
+                db=db,
                 movie_id=swipe.movie_id,
                 group_participants=swipe.group_participants
             )
             if match_found:
                 logger.info(f"Match found for movie {swipe.movie_id} and group {swipe.group_participants}")
+                # Создаем матч в БД
+                match_service.create_match(db=db, movie_id=swipe.movie_id, group_participants=swipe.group_participants)
                 
         return ApiResponse(success=True, data=db_swipe)
     

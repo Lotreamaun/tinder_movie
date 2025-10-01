@@ -60,4 +60,4 @@ class MatchResponse(BaseModel):
     matched_at: datetime
     is_notified: bool
     group_participants: list[int]
-    movie: MovieResponse
+    movie: Optional[MovieResponse] = None
