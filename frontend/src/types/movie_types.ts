@@ -36,9 +36,3 @@ export interface SessionToken {
   expiresAt: string; // ISO date string
   userId: string; // Telegram ID
 }
-
-export interface SessionToken {
-  token: string;
-  expiresAt: string; // ISO date string
-  userId: string; // Telegram ID
-}
