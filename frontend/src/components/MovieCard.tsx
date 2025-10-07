@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Heart, X } from "lucide-react";
 import type { Movie } from '../types/movie_types'
 
@@ -14,6 +14,13 @@ export const MovieCard = ({ movie, onSwipe, disabled, style }: MovieCardProps) =
   const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
+
+  const initialPosterSrc = useMemo(() => {
+    const url = movie.posterUrl;
+    if (!url || typeof url !== 'string') return '/poster-fallback.jpg';
+    const isHttp = /^https?:\/\//i.test(url);
+    return isHttp ? url : '/poster-fallback.jpg';
+  }, [movie.posterUrl]);
 
   const handleTouchStart = (e: React.TouchEvent) => {
     if (disabled) return;
@@ -70,13 +77,25 @@ export const MovieCard = ({ movie, onSwipe, disabled, style }: MovieCardProps) =
         {/* Poster Image */}
         <div className="absolute inset-0">
           <img
-            src={movie.posterUrl}
+            src={initialPosterSrc}
             alt={movie.title}
             className="w-full h-full object-cover"
             loading="lazy"
+            referrerPolicy="no-referrer"
+            crossOrigin="anonymous"
             onError={(e) => {
-              e.currentTarget.onerror = null; // prevent infinite loop if fallback fails
-              e.currentTarget.src = '/fallback_poster.jpg';
+              const img = e.currentTarget as HTMLImageElement & { dataset: { fallbackApplied?: string } };
+              if (img.dataset.fallbackApplied === 'true') {
+                // Final fallback to inline SVG to avoid any further network/CORS
+                const svg = encodeURIComponent(
+                  `<svg xmlns='http://www.w3.org/2000/svg' width='400' height='600'><rect width='100%' height='100%' fill='#222'/><text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' fill='#aaa' font-family='system-ui, sans-serif' font-size='24'>No Poster</text></svg>`
+                );
+                img.onerror = null;
+                img.src = `data:image/svg+xml;charset=UTF-8,${svg}`;
+                return;
+              }
+              img.dataset.fallbackApplied = 'true';
+              img.src = '/poster-fallback.jpg';
             }}
           />
           <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
@@ -119,7 +138,11 @@ export const MovieCard = ({ movie, onSwipe, disabled, style }: MovieCardProps) =
               </div>
               <div className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-white/25 backdrop-blur-xl border border-white/30 shadow-lg">
                 <span className="text-lg font-bold">⭐</span>
-                <span className="text-lg font-semibold drop-shadow-md">{movie.rating?.toFixed(1) ?? 'N/A'}</span>
+                {(() => {
+                  const numericRating = typeof movie.rating === 'number' ? movie.rating : Number(movie.rating ?? NaN);
+                  const display = Number.isFinite(numericRating) ? numericRating.toFixed(1) : 'N/A';
+                  return <span className="text-lg font-semibold drop-shadow-md">{display}</span>;
+                })()}
               </div>
             </div>
             

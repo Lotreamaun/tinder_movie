@@ -1,10 +1,9 @@
 import { useState, useEffect } from 'react';
 import { MovieCard } from './components/MovieCard';
 import { getRandomMovie, createSwipe, ApiError } from './services/api';
+// import './App.css';
 import type { Movie } from './types/movie_types';
-import reactLogo from './assets/react.svg';
-import viteLogo from '/vite.svg';
-import './App.css';
+// import './App.css';
 
 function App() {
   // 1. Текущий фильм
@@ -62,6 +61,9 @@ function App() {
         setMovieQueue(movies);
         setCurrentMovie(movies[0]);
         setMovieQueue(prev => prev.slice(1)); // Убираем первый фильм из очереди
+        if (import.meta.env.DEV) {
+          console.log('movie (first fetched):', movies[0]);
+        }
       } catch (err) {
         console.error('Failed to initialize app:', err);
         setError(err instanceof ApiError ? err.message : 'Failed to initialize app');
@@ -135,60 +137,47 @@ function App() {
   };
 
   return (
-    <>
-      {/* Dev/UX Banner when telegramId is missing */}
-      {!telegramId && (
-        <div style={{
-          background: '#fff3cd',
-          color: '#664d03',
-          padding: '10px 14px',
-          border: '1px solid #ffecb5',
-          borderRadius: 8,
-          margin: '10px 0'
-        }}>
-          <div style={{ marginBottom: 8 }}>
-            <strong>Telegram ID not set.</strong> Swipes are disabled. Set localStorage key <code>telegramId</code> or use env <code>VITE_DEV_TELEGRAM_ID</code> in dev.
+    <div className="min-h-screen bg-background text-foreground">
+      <div className="container py-4">
+        {/* Dev/UX Banner when telegramId is missing */}
+        {!telegramId && (
+          <div className="mb-4 rounded-lg border border-yellow-200 bg-yellow-50 p-4 text-yellow-800">
+            <div className="mb-2 font-semibold">Telegram ID not set.</div>
+            <div className="text-sm">
+              Swipes are disabled. Set localStorage key <code>telegramId</code> or use env <code>VITE_DEV_TELEGRAM_ID</code> in dev.
+            </div>
+            {import.meta.env.DEV && (
+              <div className="mt-3">
+                <DevTelegramIdSetter onSet={(id) => setTelegramId(id)} />
+              </div>
+            )}
           </div>
-          {import.meta.env.DEV && (
-            <DevTelegramIdSetter onSet={(id) => setTelegramId(id)} />
+        )}
+
+        {error && (
+          <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-red-800">
+            <div className="font-semibold">Error</div>
+            <div className="text-sm">{error}</div>
+          </div>
+        )}
+
+        <div className="movie-container">
+          {isLoading ? (
+            <div className="loading">
+              <div className="h-8 w-8 animate-spin rounded-full border-2 border-muted border-t-primary" />
+            </div>
+          ) : currentMovie ? (
+            <MovieCard
+              movie={currentMovie}
+              onSwipe={handleSwipe}
+              disabled={isSwipeInProgress}
+            />
+          ) : (
+            <div className="flex h-[60vh] items-center justify-center text-muted-foreground">No movie available</div>
           )}
         </div>
-      )}
-
-      <div>
-        <a href="https://vite.dev" target="_blank" rel="noreferrer">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank" rel="noreferrer">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
       </div>
-      <h1>Vite + React</h1>
-
-      {/* Показываем ошибку, если есть */}
-      {error && (
-        <div style={{ color: 'red', padding: '10px', backgroundColor: '#ffe6e6', margin: '10px' }}>
-          <strong>Error:</strong> {error}
-        </div>
-      )}
-
-      {/* Показываем спиннер, если загружаем */}
-      {isLoading ? (
-        <div className="loading">Loading movie...</div>
-      ) : currentMovie ? (
-        <MovieCard
-          movie={currentMovie}
-          onSwipe={handleSwipe} // передаём функцию, которая принимает 'like' | 'dislike'
-          disabled={isSwipeInProgress} // блокируем карточку при загрузке
-        />
-      ) : (
-        <p>No movie available</p>
-      )}
-
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
+    </div>
   );
 }
 
@@ -198,13 +187,13 @@ export default App;
 function DevTelegramIdSetter({ onSet }: { onSet: (id: number) => void }) {
   const [value, setValue] = useState<string>('');
   return (
-    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+    <div className="flex items-center gap-2">
       <input
         type="number"
         placeholder="Enter test Telegram ID"
         value={value}
         onChange={(e) => setValue(e.target.value)}
-        style={{ padding: 6, borderRadius: 6, border: '1px solid #d3d3d3' }}
+        className="rounded-md border border-input px-3 py-2"
       />
       <button
         onClick={() => {
@@ -214,7 +203,7 @@ function DevTelegramIdSetter({ onSet }: { onSet: (id: number) => void }) {
             onSet(parsed);
           }
         }}
-        style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #c7c7c7', background: '#fff' }}
+        className="rounded-md border border-border bg-white px-3 py-2 text-sm hover:bg-gray-50"
       >
         Set
       </button>
@@ -223,7 +212,7 @@ function DevTelegramIdSetter({ onSet }: { onSet: (id: number) => void }) {
           localStorage.removeItem('telegramId');
           onSet(null as unknown as number); // set to null via parent
         }}
-        style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #c7c7c7', background: '#fff' }}
+        className="rounded-md border border-border bg-white px-3 py-2 text-sm hover:bg-gray-50"
       >
         Clear
       </button>

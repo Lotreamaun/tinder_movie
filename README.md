@@ -115,6 +115,18 @@ tinder_movie/
 - **Итерация 1:** Настройка проекта ✅
 - **Итерация 2:** Базовая структура FastAPI ✅
 - **Итерация 3:** Telegram бот (базовый) ✅
+- **Итерация 4:** База данных и модели ✅
+- **Итерация 5:** API endpoints (базовые)
+
+## Инструкция для запуска на локалхосте
+
+1. Запускаешь БД:
+    - brew services start postgresql
+    - входишь в свою БД: psql -U lotreamaun -d tinder_movie_dev
+2. Запускаешь FastAPI:
+    - uvicorn app.main:app --reload
+3. Запускаешь frontend:
+    - npm run dev
 
 ## Лицензия
 

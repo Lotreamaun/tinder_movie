@@ -111,7 +111,7 @@ api.interceptors.request.use(
 
 // Response interceptor
 api.interceptors.response.use(
-  (response: AxiosResponse<ApiResponse<any>>) => {
+  (response: AxiosResponse<ApiResponse<any> | any>) => {
     if (import.meta.env.DEV) {
       console.log('← API Response:', {
         status: response.status,
@@ -120,9 +120,19 @@ api.interceptors.response.use(
       });
     }
 
-    // Преобразуем данные из snake_case в camelCase
-    const transformedData = snakeToCamel(response.data.data);
-    return transformedData;
+    // 204 No Content
+    if (response.status === 204 || response.data == null) {
+      return undefined as any;
+    }
+
+    // Если сервер вернул { data: T }
+    if (typeof response.data === 'object' && response.data && 'data' in response.data) {
+      const transformedData = snakeToCamel((response.data as ApiResponse<any>).data);
+      return transformedData;
+    }
+
+    // Иначе преобразуем весь payload
+    return snakeToCamel(response.data);
   },
   (error: AxiosError) => {
     if (import.meta.env.DEV) {
