@@ -36,3 +36,12 @@ export interface SessionToken {
   expiresAt: string; // ISO date string
   userId: string; // Telegram ID
 }
+
+export interface SwipeResponse {
+  id: string;
+  userId: string;
+  movieId: string;
+  swipeType: 'like' | 'dislike';
+  swipedAt: string; // ISO date string
+  groupParticipants: number[];
+}

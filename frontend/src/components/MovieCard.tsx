@@ -1,22 +1,15 @@
 import { useState } from "react";
 import { Heart, X } from "lucide-react";
-
-interface Movie {
-  id: number;
-  title: string;
-  originalTitle: string;
-  rating: number;
-  posterUrl: string;
-  description: string;
-}
+import type { Movie } from '../types/movie_types'
 
 interface MovieCardProps {
   movie: Movie;
   onSwipe: (direction: "like" | "dislike") => void;
+  disabled?: boolean;
   style?: React.CSSProperties;
 }
 
-export const MovieCard = ({ movie, onSwipe, style }: MovieCardProps) => {
+export const MovieCard = ({ movie, onSwipe, disabled, style }: MovieCardProps) => {
   const [showDescription, setShowDescription] = useState(false);
   const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
@@ -114,11 +107,11 @@ export const MovieCard = ({ movie, onSwipe, style }: MovieCardProps) => {
             <div className="flex items-start justify-between gap-4">
               <div className="flex-1">
                 <h2 className="text-2xl font-bold mb-1 drop-shadow-lg">{movie.title}</h2>
-                <p className="text-sm opacity-90 drop-shadow-md">{movie.originalTitle}</p>
+                <p className="text-sm opacity-90 drop-shadow-md">{movie.titleOriginal}</p>
               </div>
               <div className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-white/25 backdrop-blur-xl border border-white/30 shadow-lg">
                 <span className="text-lg font-bold">⭐</span>
-                <span className="text-lg font-semibold drop-shadow-md">{movie.rating.toFixed(1)}</span>
+                <span className="text-lg font-semibold drop-shadow-md">{movie.rating?.toFixed(1) ?? 'N/A'}</span>
               </div>
             </div>
             
@@ -140,13 +133,15 @@ export const MovieCard = ({ movie, onSwipe, style }: MovieCardProps) => {
         {/* Action Buttons - Liquid Glass Style */}
         <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex gap-6 pointer-events-auto">
           <button
-            onClick={() => onSwipe("dislike")}
+            onClick={() => !disabled && onSwipe("dislike")}
+            disabled={disabled}
             className="w-16 h-16 rounded-full bg-white/20 backdrop-blur-xl border border-white/30 shadow-[0_8px_32px_0_rgba(0,0,0,0.15)] flex items-center justify-center transition-all active:scale-90 hover:bg-white/30 hover:shadow-[0_8px_40px_0_rgba(0,0,0,0.2)]"
           >
             <X className="w-8 h-8 text-white drop-shadow-lg" />
           </button>
           <button
-            onClick={() => onSwipe("like")}
+            onClick={() => !disabled && onSwipe("like")}
+            disabled={disabled}
             className="w-16 h-16 rounded-full bg-white/20 backdrop-blur-xl border border-white/30 shadow-[0_8px_32px_0_rgba(0,0,0,0.15)] flex items-center justify-center transition-all active:scale-90 hover:bg-white/30 hover:shadow-[0_8px_40px_0_rgba(0,0,0,0.2)]"
           >
             <Heart className="w-8 h-8 text-white drop-shadow-lg" fill="currentColor" />

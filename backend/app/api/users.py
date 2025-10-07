@@ -35,7 +35,7 @@ def create_user(user: UserCreate, db: Session = Depends(get_db)) -> ApiResponse[
             detail=str(e)
         )
 
-@router.get("/{id}", response_model=ApiResponse[UserResponse])
+@router.get("/id/{id}", response_model=ApiResponse[UserResponse])
 def get_user(id: UUID, db: Session = Depends(get_db)) -> ApiResponse[UserResponse]:
     """
     Получение пользователя по ID.
@@ -51,6 +51,22 @@ def get_user(id: UUID, db: Session = Depends(get_db)) -> ApiResponse[UserRespons
     """
     try:
         user = user_service.get_user_by_id(db=db, id=str(id))
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        return ApiResponse(success=True, data=user)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get user: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error"
+        )
+
+@router.get("/telegram_id/{telegram_id}", response_model=ApiResponse[UserResponse])
+def get_user_by_telegram(telegram_id: int, db: Session = Depends(get_db)) -> ApiResponse[UserResponse]:
+    try:
+        user = user_service.get_user_by_telegram_id(db=db, telegram_id=telegram_id)
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
         return ApiResponse(success=True, data=user)

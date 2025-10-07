@@ -1,6 +1,5 @@
 import axios, { AxiosError, type AxiosResponse } from 'axios';
-import type { Movie } from '../types/movie_types';
-// import type { SwipeResponse } from '../types/swipe_types';
+import type { Movie, SwipeResponse } from '../types/movie_types';
 
 // =============================================================================
 // 1. Custom Error Class
@@ -185,13 +184,11 @@ export async function createSwipe(params: {
   // Преобразуем тело запроса в snake_case
   const snakeCaseBody = camelToSnake(bodyParams);
 
-  const response = await api.post<ApiResponse<any>>('/api/swipes/', snakeCaseBody, {
+  return api.post('/swipes', snakeCaseBody, {
     headers: {
       telegram_id: telegramId.toString(), // Заголовок как строка
     },
   });
-
-  return response; // interceptor уже обработал ответ
 }
 
 // =============================================================================
