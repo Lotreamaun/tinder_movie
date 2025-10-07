@@ -11,7 +11,7 @@ function App() {
   const [currentMovie, setCurrentMovie] = useState<Movie | null>(null);
 
   // 2. Очередь фильмов (предзагрузка)
-  const [movieQueue, setMovieQueue] = useState<Movie[]>([]);
+  const [_movieQueue, setMovieQueue] = useState<Movie[]>([]);
 
   // 3. Состояние загрузки
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -34,6 +34,14 @@ function App() {
         if (storedTelegramId) {
           setTelegramId(Number(storedTelegramId));
         } else {
+          // Dev fallback для удобного локального теста
+          const devId = import.meta.env.VITE_DEV_TELEGRAM_ID;
+          if (import.meta.env.DEV && devId) {
+            const parsed = Number(devId);
+            if (!Number.isNaN(parsed)) {
+              setTelegramId(parsed);
+            }
+          }
           // В реальном приложении: вызвать API, чтобы получить telegramId
           // const user = await api.getCurrentUser();
           // setTelegramId(user.telegramId);
@@ -80,19 +88,40 @@ function App() {
         telegramId,
       });
 
-      // После успешного свайпа — берём следующий фильм из очереди
-      if (movieQueue.length > 0) {
-        const [nextMovie, ...rest] = movieQueue;
-        setCurrentMovie(nextMovie);
-        setMovieQueue(rest);
-      } else {
-        // Если очередь пуста — загружаем ещё один фильм
-        const nextMovie = await getRandomMovie();
-        setCurrentMovie(nextMovie);
+      // Поп и выбор следующего фильма + решение о предзагрузке — в одном функциональном апдейтере
+      let needFetchNext = false;
+      let needPreload = false;
+
+      setMovieQueue(prev => {
+        let next: Movie | null = null;
+        let newQueue: Movie[] = prev;
+
+        if (prev.length > 0) {
+          const [first, ...rest] = prev;
+          next = first;
+          newQueue = rest;
+        } else {
+          next = null;
+        }
+
+        // Обновляем текущий фильм, рассчитанный из prev
+        setCurrentMovie(next);
+
+        // Фиксируем решения, чтобы выполнить асинхронные действия после апдейта очереди
+        needFetchNext = next === null;
+        needPreload = newQueue.length < 3;
+
+        return newQueue;
+      });
+
+      // Если не было следующего фильма в очереди — загружаем новый
+      if (needFetchNext) {
+        const fetched = await getRandomMovie();
+        setCurrentMovie(fetched);
       }
 
-      // Подгружаем ещё один фильм, если в очереди мало
-      if (movieQueue.length < 3) {
+      // Если очередь стала короткой — предзагружаем ещё один
+      if (needPreload) {
         const preload = await getRandomMovie();
         setMovieQueue(prev => [...prev, preload]);
       }
@@ -107,6 +136,25 @@ function App() {
 
   return (
     <>
+      {/* Dev/UX Banner when telegramId is missing */}
+      {!telegramId && (
+        <div style={{
+          background: '#fff3cd',
+          color: '#664d03',
+          padding: '10px 14px',
+          border: '1px solid #ffecb5',
+          borderRadius: 8,
+          margin: '10px 0'
+        }}>
+          <div style={{ marginBottom: 8 }}>
+            <strong>Telegram ID not set.</strong> Swipes are disabled. Set localStorage key <code>telegramId</code> or use env <code>VITE_DEV_TELEGRAM_ID</code> in dev.
+          </div>
+          {import.meta.env.DEV && (
+            <DevTelegramIdSetter onSet={(id) => setTelegramId(id)} />
+          )}
+        </div>
+      )}
+
       <div>
         <a href="https://vite.dev" target="_blank" rel="noreferrer">
           <img src={viteLogo} className="logo" alt="Vite logo" />
@@ -145,3 +193,40 @@ function App() {
 }
 
 export default App;
+
+// Dev-only helper: inline to keep things simple
+function DevTelegramIdSetter({ onSet }: { onSet: (id: number) => void }) {
+  const [value, setValue] = useState<string>('');
+  return (
+    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+      <input
+        type="number"
+        placeholder="Enter test Telegram ID"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        style={{ padding: 6, borderRadius: 6, border: '1px solid #d3d3d3' }}
+      />
+      <button
+        onClick={() => {
+          const parsed = Number(value);
+          if (!Number.isNaN(parsed) && parsed > 0) {
+            localStorage.setItem('telegramId', String(parsed));
+            onSet(parsed);
+          }
+        }}
+        style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #c7c7c7', background: '#fff' }}
+      >
+        Set
+      </button>
+      <button
+        onClick={() => {
+          localStorage.removeItem('telegramId');
+          onSet(null as unknown as number); // set to null via parent
+        }}
+        style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #c7c7c7', background: '#fff' }}
+      >
+        Clear
+      </button>
+    </div>
+  );
+}

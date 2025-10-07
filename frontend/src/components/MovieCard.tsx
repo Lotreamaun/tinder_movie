@@ -16,12 +16,14 @@ export const MovieCard = ({ movie, onSwipe, disabled, style }: MovieCardProps) =
   const [isDragging, setIsDragging] = useState(false);
 
   const handleTouchStart = (e: React.TouchEvent) => {
+    if (disabled) return;
     const touch = e.touches[0];
     setDragStart({ x: touch.clientX, y: touch.clientY });
     setIsDragging(true);
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
+    if (disabled) return;
     if (!dragStart) return;
     const touch = e.touches[0];
     const deltaX = touch.clientX - dragStart.x;
@@ -30,6 +32,7 @@ export const MovieCard = ({ movie, onSwipe, disabled, style }: MovieCardProps) =
   };
 
   const handleTouchEnd = () => {
+    if (disabled) return;
     if (!dragStart) return;
     
     const threshold = 100;
@@ -70,6 +73,11 @@ export const MovieCard = ({ movie, onSwipe, disabled, style }: MovieCardProps) =
             src={movie.posterUrl}
             alt={movie.title}
             className="w-full h-full object-cover"
+            loading="lazy"
+            onError={(e) => {
+              e.currentTarget.onerror = null; // prevent infinite loop if fallback fails
+              e.currentTarget.src = '/fallback_poster.jpg';
+            }}
           />
           <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
         </div>

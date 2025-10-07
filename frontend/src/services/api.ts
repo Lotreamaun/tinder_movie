@@ -167,7 +167,7 @@ api.interceptors.response.use(
  * Получает случайный фильм с сервера
  */
 export async function getRandomMovie(): Promise<Movie> {
-    return api.get('/random');
+    return api.get('/api/movies/random');
   }
 
 /**
@@ -184,9 +184,9 @@ export async function createSwipe(params: {
   // Преобразуем тело запроса в snake_case
   const snakeCaseBody = camelToSnake(bodyParams);
 
-  return api.post('/swipes', snakeCaseBody, {
+  return api.post('/api/swipes/', snakeCaseBody, {
     headers: {
-      telegram_id: telegramId.toString(), // Заголовок как строка
+      'telegram-id': telegramId.toString(), // Заголовок как строка
     },
   });
 }
