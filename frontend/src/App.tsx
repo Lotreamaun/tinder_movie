@@ -1,9 +1,8 @@
 import { useState, useEffect } from 'react';
 import { MovieCard } from './components/MovieCard';
 import { getRandomMovie, createSwipe, ApiError } from './services/api';
-// import './App.css';
+import './App.css';
 import type { Movie } from './types/movie_types';
-// import './App.css';
 
 function App() {
   // 1. Текущий фильм

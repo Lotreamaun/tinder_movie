@@ -107,7 +107,8 @@
 - [x] Настроить API клиент: POST /api/swipes/ с заголовком telegram-id
 - [x] Dev fallback для telegramId через VITE_DEV_TELEGRAM_ID
 - [x] Добавить базовые стили (без Tailwind или с его подключением)
-- [ ] Пофиксить проблему с импортом App.css в App.tsx
+- [x] Пофиксить проблему с импортом App.css в App.tsx
+- [ ] Починить min-height в movie-container в App.css
 - [ ] Выяснить причину и пофиксить ошибки в браузере:
     - [ ] Cross-Origin Read Blocking (CORB) blocked a cross-origin response
     - [ ] Ошибка в GET-запросе
