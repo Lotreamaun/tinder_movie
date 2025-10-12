@@ -1,12 +1,49 @@
 from typing import Optional, Sequence
 
-from sqlalchemy import select
+from sqlalchemy import select, and_
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.match import Match
 
 class MatchService:
+    def check_existing_match(self, db: Session, movie_id: str, group_participants: list[int]) -> Optional[Match]:
+        """
+        Проверяет, существует ли уже матч для данного фильма и группы.
+        
+        Args:
+            db (Session): Сессия БД
+            movie_id (str): ID фильма
+            group_participants (list[int]): Список telegram_id участников группы
+            
+        Returns:
+            Optional[Match]: Существующий матч или None
+        """
+        stmt = select(Match).where(
+            and_(
+                Match.movie_id == movie_id,
+                Match.group_participants == group_participants
+            )
+        )
+        return db.execute(stmt).scalar_one_or_none()
+
     def create_match(self, db: Session, movie_id: str, group_participants: list[int]) -> Match:
+        """
+        Создает новый матч, если он еще не существует.
+        
+        Args:
+            db (Session): Сессия БД
+            movie_id (str): ID фильма
+            group_participants (list[int]): Список telegram_id участников группы
+            
+        Returns:
+            Match: Созданный или существующий матч
+        """
+        # Проверяем, не существует ли уже такой матч
+        existing_match = self.check_existing_match(db, movie_id, group_participants)
+        if existing_match:
+            return existing_match
+            
+        # Создаем новый матч
         match = Match(movie_id=movie_id, group_participants=group_participants)
         db.add(match)
         db.commit()
