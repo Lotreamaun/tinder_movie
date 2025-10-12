@@ -137,7 +137,7 @@ function App() {
 
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <div className="container py-4">
+      <div className="container py-4 flex flex-col">
         {/* Dev/UX Banner when telegramId is missing */}
         {!telegramId && (
           <div className="mb-4 rounded-lg border border-yellow-200 bg-yellow-50 p-4 text-yellow-800">
@@ -160,7 +160,7 @@ function App() {
           </div>
         )}
 
-        <div className="movie-container">
+        <div className="movie-container flex-1">
           {isLoading ? (
             <div className="loading">
               <div className="h-8 w-8 animate-spin rounded-full border-2 border-muted border-t-primary" />
@@ -170,6 +170,7 @@ function App() {
               movie={currentMovie}
               onSwipe={handleSwipe}
               disabled={isSwipeInProgress}
+              className="h-full"
             />
           ) : (
             <div className="flex h-[60vh] items-center justify-center text-muted-foreground">No movie available</div>

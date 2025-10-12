@@ -7,6 +7,7 @@ interface MovieCardProps {
   onSwipe: (direction: "like" | "dislike") => void;
   disabled?: boolean;
   style?: React.CSSProperties;
+  className?: string;
 }
 
 export const MovieCard = ({ movie, onSwipe, disabled, style }: MovieCardProps) => {
