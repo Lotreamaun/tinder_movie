@@ -28,6 +28,16 @@ class UserService:
         return list(db.execute(stmt).scalars())
 
 
+    def get_users_by_telegram_ids(self, db: Session, telegram_ids: list[int]) -> Sequence[User]:
+        """
+        Возвращает пользователей, найденных по списку telegram_id.
+        """
+        if not telegram_ids:
+            return []
+        stmt = select(User).where(User.telegram_id.in_(telegram_ids))
+        return list(db.execute(stmt).scalars())
+
+
     def update_user_name(self, db: Session, user: User, first_name: Optional[str] = None, username: Optional[str] = None) -> User:
         if first_name is not None:
             user.first_name = first_name

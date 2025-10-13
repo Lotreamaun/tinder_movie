@@ -42,7 +42,7 @@ def create_swipe(
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
 
-        # Создаем свайп
+        # Создаем свайп (идемпотентно) с нормализацией внутри сервиса
         db_swipe = swipe_service.create_swipe(db=db, **swipe.model_dump(), user_id=str(user.id))
         
         # Проверяем на матч если это лайк
@@ -56,8 +56,25 @@ def create_swipe(
                 logger.info(f"Match found for movie {swipe.movie_id} and group {swipe.group_participants}")
                 # Создаем матч в БД
                 match_service.create_match(db=db, movie_id=swipe.movie_id, group_participants=swipe.group_participants)
-                
-        return ApiResponse(success=True, data=db_swipe)
+        
+        # Расширяем ответ полем match_found
+        try:
+            match_found = swipe_service.check_match(
+                db=db,
+                movie_id=swipe.movie_id,
+                group_participants=swipe.group_participants
+            )
+        except Exception:
+            match_found = False
+
+        from pydantic import BaseModel
+        class SwipeResponseWithMatch(SwipeResponse):
+            match_found: bool
+
+        # Приводим ORM-модель к pydantic, затем дополняем
+        response_data = SwipeResponse.model_validate(db_swipe).model_dump()
+        response_data["match_found"] = match_found
+        return ApiResponse(success=True, data=SwipeResponseWithMatch(**response_data))
     
     except ValueError as e:
         logger.warning(f"Invalid swipe data: {e}")

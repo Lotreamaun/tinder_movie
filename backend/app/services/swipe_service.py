@@ -8,6 +8,12 @@ from app.models.user import User
 from app.config import settings
 
 class SwipeService:
+    @staticmethod
+    def normalize_group_participants(group_participants: list[int]) -> list[int]:
+        """
+        Возвращает отсортированный по возрастанию список telegram_id без дубликатов.
+        """
+        return sorted(set(group_participants))
     def create_swipe(
         self,
         db: Session,
@@ -32,13 +38,28 @@ class SwipeService:
         Raises:
             ValueError: Если размер группы превышает максимальный
         """
+        # Нормализация и валидация группы
+        group_participants = self.normalize_group_participants(group_participants)
+
         # Валидация размера группы
         if len(group_participants) > settings.MAX_GROUP_SIZE:
             raise ValueError(f"Group size cannot exceed {settings.MAX_GROUP_SIZE} participants")
         
         if len(group_participants) < 2:
             raise ValueError("Group must have at least 2 participants")
-            
+
+        # Идемпотентность: если запись уже есть — обновляем тип и время
+        existing = self.get_swipe(db=db, user_id=user_id, movie_id=movie_id, group_participants=group_participants)
+        if existing:
+            existing.swipe_type = swipe_type
+            # swiped_at обновится на уровне БД только при явном изменении; обновим вручную
+            from datetime import datetime, timezone
+            existing.swiped_at = datetime.now(timezone.utc)
+            db.add(existing)
+            db.commit()
+            db.refresh(existing)
+            return existing
+
         swipe = UserSwipe(
             user_id=user_id,
             movie_id=movie_id,
@@ -92,6 +113,9 @@ class SwipeService:
             if len(group_participants) > settings.MAX_GROUP_SIZE:
                 raise ValueError(f"Group size cannot exceed {settings.MAX_GROUP_SIZE} participants")
             
+            # Нормализуем группу для корректного сравнения JSON массива
+            group_participants = self.normalize_group_participants(group_participants)
+
             # Получаем все лайки для данного фильма и группы
             stmt = (
                 select(UserSwipe, User.telegram_id)

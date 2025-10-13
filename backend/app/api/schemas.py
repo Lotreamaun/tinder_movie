@@ -29,6 +29,11 @@ class SwipeCreate(BaseModel):
     swipe_type: str  # 'like' или 'dislike'
     group_participants: list[int]  # список telegram_id участников
 
+    def model_post_init(self, __context):
+        # Простая нормализация на уровне схемы: убираем дубли (сортируем в сервисе)
+        if self.group_participants:
+            self.group_participants = list(dict.fromkeys(self.group_participants))
+
 class SwipeResponse(BaseModel):
     id: UUID
     user_id: UUID
@@ -36,6 +41,13 @@ class SwipeResponse(BaseModel):
     swipe_type: str
     swiped_at: datetime
     group_participants: list[int]
+
+class VoteStatusResponse(BaseModel):
+    total_participants: int
+    likes_count: int
+    dislikes_count: int
+    votes: dict[int, str]
+    match_ready: bool
 
 # Movie schemas
 class MovieBase(BaseModel):
