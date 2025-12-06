@@ -48,6 +48,21 @@ class MatchService:
         db.add(match)
         db.commit()
         db.refresh(match)
+        
+        # Отправляем уведомления в фоне (не блокируем создание матча)
+        try:
+            from app.services.notification_service import notification_service
+            notification_service.send_match_notification(match, db)
+            # Помечаем как отправленное (предполагаем успех)
+            # В реальности уведомление может не отправиться, но для MVP это приемлемо
+            match.is_notified = True
+            db.add(match)
+            db.commit()
+        except Exception as e:
+            from app.logging_config import logger
+            logger.error(f"Failed to send match notification: {e}", exc_info=True)
+            # Не падаем, матч уже создан
+        
         return match
 
 

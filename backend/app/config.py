@@ -20,7 +20,7 @@ class Settings:
     
     # Kinopoisk API
     KINOPOISK_API_KEY: str = os.getenv("KINOPOISK_API_KEY", "")
-    KINOPOISK_BASE_URL: str = os.getenv("KINOPOISK_BASE_URL", "https://kinopoiskapiunofficial.tech/api")
+    KINOPOISK_BASE_URL: str = os.getenv("KINOPOISK_BASE_URL", "https://kinopoiskapiunofficial.tech")
     
     # Приложение
     APP_HOST: str = os.getenv("APP_HOST", "0.0.0.0")
