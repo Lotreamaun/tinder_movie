@@ -7,12 +7,12 @@ from ..database import get_db
 from ..services.swipe_service import swipe_service
 from ..services.user_service import user_service
 from ..services.match_service import match_service
-from .schemas import SwipeCreate, SwipeResponse, ApiResponse
+from .schemas import SwipeCreate, SwipeResponse, SwipeResponseWithMatch, ApiResponse
 from ..logging_config import logger
 
 router = APIRouter(prefix="/api/swipes", tags=["swipes"])
 
-@router.post("/", response_model=ApiResponse[SwipeResponse], responses={
+@router.post("/", response_model=ApiResponse[SwipeResponseWithMatch], responses={
     404: {"description": "Пользователь не найден"},
     400: {"description": "Некорректные данные свайпа"},
     500: {"description": "Внутренняя ошибка сервера"}
@@ -21,7 +21,7 @@ def create_swipe(
     swipe: SwipeCreate,
     telegram_id: Annotated[int, Header(description="Telegram ID пользователя")],
     db: Session = Depends(get_db)
-) -> ApiResponse[SwipeResponse]:
+) -> ApiResponse[SwipeResponseWithMatch]:
     """
     Создание нового свайпа.
     
@@ -66,10 +66,6 @@ def create_swipe(
             )
         except Exception:
             match_found = False
-
-        from pydantic import BaseModel
-        class SwipeResponseWithMatch(SwipeResponse):
-            match_found: bool
 
         # Приводим ORM-модель к pydantic, затем дополняем
         response_data = SwipeResponse.model_validate(db_swipe).model_dump()

@@ -42,6 +42,12 @@ class SwipeResponse(BaseModel):
     swiped_at: datetime
     group_participants: list[int]
 
+    class Config:
+        from_attributes = True
+
+class SwipeResponseWithMatch(SwipeResponse):
+    match_found: bool
+
 class VoteStatusResponse(BaseModel):
     total_participants: int
     likes_count: int

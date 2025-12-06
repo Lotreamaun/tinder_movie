@@ -44,4 +44,5 @@ export interface SwipeResponse {
   swipeType: 'like' | 'dislike';
   swipedAt: string; // ISO date string
   groupParticipants: number[];
+  matchFound?: boolean; // Опциональное поле - присутствует только при лайке
 }
