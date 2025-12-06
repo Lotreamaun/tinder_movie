@@ -155,7 +155,7 @@ tinder_movie/
 
 ## Деплой
 
-Подробная инструкция по деплою в Railway + Vercel находится в [`DEPLOY_GUIDE.md`](DEPLOY_GUIDE.md).
+Деплой в Supabase + Vercel! Подробная инструкция в [`DEPLOY_GUIDE.md`](DEPLOY_GUIDE.md).
 
 ## Разработка
 

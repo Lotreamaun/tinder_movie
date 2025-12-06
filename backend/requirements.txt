@@ -27,3 +27,6 @@ structlog==23.2.0
 
 # Утилиты
 python-multipart==0.0.6
+
+# Vercel serverless
+mangum==0.17.0
