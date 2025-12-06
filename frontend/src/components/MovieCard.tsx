@@ -19,8 +19,7 @@ export const MovieCard = ({ movie, onSwipe, disabled, style }: MovieCardProps) =
   const initialPosterSrc = useMemo(() => {
     const url = movie.posterUrl;
     if (!url || typeof url !== 'string') return '/poster-fallback.jpg';
-    const isHttp = /^https?:\/\//i.test(url);
-    return isHttp ? url : '/poster-fallback.jpg';
+    return url;
   }, [movie.posterUrl]);
 
   const handleTouchStart = (e: React.TouchEvent) => {
@@ -82,8 +81,6 @@ export const MovieCard = ({ movie, onSwipe, disabled, style }: MovieCardProps) =
             alt={movie.title}
             className="w-full h-full object-cover"
             loading="lazy"
-            referrerPolicy="no-referrer"
-            crossOrigin="anonymous"
             onError={(e) => {
               const img = e.currentTarget as HTMLImageElement & { dataset: { fallbackApplied?: string } };
               if (img.dataset.fallbackApplied === 'true') {

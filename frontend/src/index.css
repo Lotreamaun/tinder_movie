@@ -81,4 +81,4 @@
 }
 
 /* Smoke test to ensure CSS is loaded */
-body { outline: 5px solid magenta; }
+body { outline: none; }

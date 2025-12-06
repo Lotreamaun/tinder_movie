@@ -42,13 +42,13 @@ def get_random_movie(db: Session = Depends(get_db)) -> ApiResponse[MovieResponse
 def get_movie(id: UUID, db: Session = Depends(get_db)) -> ApiResponse[MovieResponse]:
     """
     Получение фильма по ID.
-    
+
     Args:
         movie_id (UUID): ID фильма
-        
+
     Returns:
         ApiResponse[MovieResponse]: Данные фильма
-        
+
     Raises:
         HTTPException: Если фильм не найден
     """
@@ -65,3 +65,4 @@ def get_movie(id: UUID, db: Session = Depends(get_db)) -> ApiResponse[MovieRespo
             status_code=500,
             detail="Internal server error"
         )
+
