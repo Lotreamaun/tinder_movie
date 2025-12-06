@@ -39,7 +39,7 @@ class Settings:
     LOG_FILE: str = os.getenv("LOG_FILE", "logs/app.log")
     
     # Бизнес-логика
-    MAX_GROUP_SIZE: int = 5
+    MAX_ROOM_SIZE: int = 5
     SESSION_DURATION_HOURS: int = 24 * 30  # 30 дней
     MOVIE_CACHE_TTL: int = 3600  # 1 час
     MIN_MOVIES_COUNT: int = 50  # Минимальное количество фильмов в БД

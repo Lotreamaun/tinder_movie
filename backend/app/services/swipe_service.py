@@ -42,9 +42,9 @@ class SwipeService:
         group_participants = self.normalize_group_participants(group_participants)
 
         # Валидация размера группы
-        if len(group_participants) > settings.MAX_GROUP_SIZE:
-            raise ValueError(f"Group size cannot exceed {settings.MAX_GROUP_SIZE} participants")
-        
+        if len(group_participants) > settings.MAX_ROOM_SIZE:
+            raise ValueError(f"Group size cannot exceed {settings.MAX_ROOM_SIZE} participants")
+
         if len(group_participants) < 2:
             raise ValueError("Group must have at least 2 participants")
 
@@ -110,8 +110,8 @@ class SwipeService:
             if not group_participants or len(group_participants) < 2:
                 raise ValueError("Group must have at least 2 participants")
                 
-            if len(group_participants) > settings.MAX_GROUP_SIZE:
-                raise ValueError(f"Group size cannot exceed {settings.MAX_GROUP_SIZE} participants")
+            if len(group_participants) > settings.MAX_ROOM_SIZE:
+                raise ValueError(f"Group size cannot exceed {settings.MAX_ROOM_SIZE} participants")
             
             # Нормализуем группу для корректного сравнения JSON массива
             group_participants = self.normalize_group_participants(group_participants)
