@@ -42,6 +42,10 @@ class Settings:
     MAX_GROUP_SIZE: int = 5
     SESSION_DURATION_HOURS: int = 24 * 30  # 30 дней
     MOVIE_CACHE_TTL: int = 3600  # 1 час
+    MIN_MOVIES_COUNT: int = 50  # Минимальное количество фильмов в БД
+    MOVIES_LOAD_THRESHOLD: int = 20  # Порог для загрузки новых фильмов
+    MOVIES_LOAD_BATCH: int = 30  # Количество фильмов для загрузки за раз
+    MAX_MOVIES_IN_DB: int = 100  # Максимальное количество фильмов в БД (ротация)
 
 
 # Создаем экземпляр настроек
