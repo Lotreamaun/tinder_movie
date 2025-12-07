@@ -59,12 +59,13 @@ alembic upgrade head
 4. **Output Directory:** Оставить пустым
 
 ### 2.3 Настройка Vercel Python Runtime
-1. Создать файл `vercel.json` в корне проекта:
+1. **Python 3.12**: Проект использует Python 3.12 (актуальную версию Vercel Python Runtime)
+2. Создать файл `vercel.json` в корне проекта:
 ```json
 {
   "functions": {
     "api/**/*.py": {
-      "runtime": "python3.9"
+      "runtime": "python3.12"
     }
   },
   "rewrites": [

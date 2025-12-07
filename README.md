@@ -8,7 +8,7 @@ Movie Tinder Bot позволяет группе друзей асинхронн
 
 ## Технологии
 
-- **Backend:** Python 3.11+, FastAPI, SQLAlchemy, PostgreSQL, Redis
+- **Backend:** Python 3.12+, FastAPI, SQLAlchemy, PostgreSQL, Redis
 - **Frontend:** React, TypeScript, Vite, Tailwind CSS
 - **Bot:** python-telegram-bot
 - **Деплой:** Docker, Docker Compose
