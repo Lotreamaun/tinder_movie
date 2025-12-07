@@ -24,7 +24,7 @@ class Settings:
     
     # Приложение
     APP_HOST: str = os.getenv("APP_HOST", "0.0.0.0")
-    APP_PORT: int = int(os.getenv("PORT"), os.getenv("APP_PORT", "8000"))
+    APP_PORT: int = int(os.getenv("PORT", "8000"))
     APP_DEBUG: bool = os.getenv("APP_ENV", "development") == "development"
     
     # CORS / Frontend
