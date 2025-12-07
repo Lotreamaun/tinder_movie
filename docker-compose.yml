@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  # Backend API (FastAPI) - internal only, no external ports
+  backend:
+    build: ./backend
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - KINOPOISK_API_KEY=${KINOPOISK_API_KEY}
+      - KINOPOISK_BASE_URL=${KINOPOISK_BASE_URL}
+      - APP_HOST=0.0.0.0
+      - APP_PORT=8000
+      - APP_ENV=production
+      - FRONTEND_ORIGIN=http://localhost
+      - SECRET_KEY=${SECRET_KEY}
+      - JWT_SECRET=${JWT_SECRET}
+      - LOG_LEVEL=INFO
+      - LOG_FILE=/app/logs/app.log
+    volumes:
+      - ./logs:/app/logs
+    restart: unless-stopped
+    # NO PORTS EXPOSED - only internal Docker network
+
+  # Telegram Bot (separate service)
+  bot:
+    build: ./backend
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - KINOPOISK_API_KEY=${KINOPOISK_API_KEY}
+      - KINOPOISK_BASE_URL=${KINOPOISK_BASE_URL}
+      - APP_ENV=production
+      - LOG_LEVEL=INFO
+      - LOG_FILE=/app/logs/bot.log
+    volumes:
+      - ./logs:/app/logs
+    command: ["python", "-c", "from app.bot.handlers import run_polling; run_polling()"]
+    restart: unless-stopped
+    depends_on:
+      - backend
+
+  # Frontend (React build)
+  frontend:
+    build: ./frontend
+    environment:
+      - VITE_API_BASE_URL=http://localhost/api
+    restart: unless-stopped
+    # NO PORTS EXPOSED - nginx handles it
+
+  # Nginx reverse proxy
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - backend
+      - frontend
+    restart: unless-stopped
