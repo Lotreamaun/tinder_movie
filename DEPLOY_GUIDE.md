@@ -1,7 +1,14 @@
 # 🚀 Руководство по деплою Movie Tinder Bot
 
 ## 🎯 Обзор
-Деплой в Supabase + Vercel! Идеально для MVP.
+Деплой в **Railway + Vercel + Supabase**! API и бот на Railway, frontend на Vercel, база на Supabase.
+
+## ⚠️ Важно: Архитектура
+- **Railway**: Backend API + Telegram бот (нужен постоянный сервер)
+- **Vercel**: Frontend (React мини-приложение)
+- **Supabase**: PostgreSQL база данных
+
+**Почему не только Vercel?** Telegram бот требует постоянного соединения (polling), что не работает в serverless среде Vercel.
 
 ## 📋 Предварительные требования
 - ✅ GitHub аккаунт
@@ -44,7 +51,7 @@ alembic upgrade head
 
 ---
 
-## ⚡ Этап 2: Vercel (Backend + Frontend)
+## ⚡ Этап 2: Railway (Backend API + Telegram Bot)
 
 ### 2.1 Регистрация и импорт проекта
 1. Перейти на https://vercel.com
@@ -52,57 +59,27 @@ alembic upgrade head
 3. Нажать **"Import Project"**
 4. Выбрать ваш GitHub репозиторий `movie-tinder`
 
-### 2.2 Настройка backend (Serverless Functions)
-1. **Framework Preset:** Выбрать **"Other"**
-2. **Root Directory:** Оставить пустым (корень проекта)
-3. **Build Command:** `pip install -r backend/requirements.txt`
-4. **Output Directory:** Оставить пустым
+### 2.2 Настройка Railway проекта
+1. Перейти на https://railway.app
+2. **"New Project"** → **"Deploy from GitHub repo"**
+3. Выбрать ваш репозиторий `movie-tinder`
+4. **Root Directory:** Оставить пустым
+5. **Build Command:** `pip install -r backend/requirements.txt`
+6. **Start Command:** `RUN_BOT=1 python -m app.main`
 
-### 2.3 Настройка Vercel Python Runtime
-1. **Python 3.12**: Проект использует Python 3.12 (актуальную версию Vercel Python Runtime)
-2. Создать файл `vercel.json` в корне проекта:
-```json
-{
-  "functions": {
-    "api/**/*.py": {
-      "runtime": "python3.12"
-    }
-  },
-  "rewrites": [
-    {
-      "source": "/api/(.*)",
-      "destination": "/api/$1"
-    }
-  ]
-}
+### 2.3 Переменные окружения для Railway
+В настройках Railway проекта добавить:
+
+```
+DATABASE_URL=ваш_connection_string_из_supabase
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
+KINOPOISK_API_KEY=your_api_key_here
+KINOPOISK_BASE_URL=https://kinopoiskapiunofficial.tech
+APP_ENV=production
+RUN_BOT=1
 ```
 
-2. Создать папку `api/` в корне проекта
-3. Создать файл `api/index.py` (главный обработчик):
-```python
-# api/index.py
-import os
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from mangum import Mangum
-
-# Импортировать ваше FastAPI приложение
-from backend.app.main import app as fastapi_app
-
-# Настроить CORS для Vercel домена
-fastapi_app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Или конкретный домен Vercel
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Адаптер для Vercel
-handler = Mangum(fastapi_app)
-```
-
-### 2.4 Установка зависимостей
+### 2.4 Деплой на Railway
 Добавить в `requirements.txt`:
 ```
 mangum==0.17.0
@@ -119,35 +96,42 @@ KINOPOISK_BASE_URL=https://kinopoiskapiunofficial.tech
 APP_ENV=production
 ```
 
-### 2.5 Настройка frontend
-1. В том же проекте Vercel создать дополнительную конфигурацию для frontend
-2. **Root Directory:** `frontend`
-3. **Framework Preset:** **"Vite"**
-4. **Build Command:** `npm run build`
-5. **Output Directory:** `dist`
-
-### 2.6 Переменные для frontend
-```
-VITE_API_BASE_URL=https://your-vercel-domain.vercel.app/api
-```
-
-### 2.7 Деплой
+### 2.4 Деплой на Railway
 1. Нажать **"Deploy"**
-2. Vercel задеплоит и backend (serverless) и frontend
-3. Получить домены:
-   - API: `https://movie-tinder.vercel.app/api/*`
-   - Frontend: `https://movie-tinder.vercel.app`
+2. Railway запустит backend API и Telegram бот
+3. Получить домен backend (типа https://movie-tinder.railway.app)
 
 ---
 
-## 🔧 Этап 3: Проверка работы
+## 🎨 Этап 3: Vercel (Frontend)
 
-### 3.1 Backend API
+### 3.1 Настройка Vercel проекта
+1. Перейти на https://vercel.com
+2. **"Import Project"** → Выбрать ваш GitHub репозиторий
+3. **Root Directory:** `frontend`
+4. **Framework Preset:** **"Vite"**
+5. **Build Command:** `npm run build`
+6. **Output Directory:** `dist`
+
+### 3.2 Переменные окружения для frontend
+```
+VITE_API_BASE_URL=https://your-railway-domain.railway.app/api
+```
+
+### 3.3 Деплой frontend
+1. Нажать **"Deploy"**
+2. Получить домен frontend (типа https://movie-tinder.vercel.app)
+
+---
+
+## 🔧 Этап 4: Проверка работы
+
+### 4.1 Backend API (Railway)
 Проверить эндпоинты:
-- `https://your-vercel-domain.vercel.app/api/health`
-- `https://your-vercel-domain.vercel.app/api/movies/random`
+- `https://your-railway-domain.railway.app/api/health`
+- `https://your-railway-domain.railway.app/api/movies/random`
 
-### 3.2 Frontend
+### 4.2 Frontend (Vercel)
 Открыть `https://your-vercel-domain.vercel.app`
 
 ### 3.3 Telegram бот
@@ -162,11 +146,11 @@ VITE_API_BASE_URL=https://your-vercel-domain.vercel.app/api
 ### 4.1 Создание тестовых пользователей
 ```bash
 # Через API создать пользователей
-curl -X POST https://your-vercel-domain.vercel.app/api/users/ \
+curl -X POST https://your-railway-domain.railway.app/api/users/ \
   -H "Content-Type: application/json" \
   -d '{"telegram_id": 123456789, "first_name": "TestUser1"}'
 
-curl -X POST https://your-vercel-domain.vercel.app/api/users/ \
+curl -X POST https://your-railway-domain.railway.app/api/users/ \
   -H "Content-Type: application/json" \
   -d '{"telegram_id": 987654321, "first_name": "TestUser2"}'
 ```
@@ -184,8 +168,8 @@ curl -X POST https://your-vercel-domain.vercel.app/api/users/ \
 
 ## 🚨 Возможные проблемы и решения
 
-### Supabase проблемы:
-- **Не получается подключиться:** Проверить что `DATABASE_URL` правильный в Vercel
+### Railway проблемы:
+- **Не получается подключиться:** Проверить что `DATABASE_URL` правильный в Railway
 - **Миграции не работают:** Запустить `alembic upgrade head` локально с правильным `DATABASE_URL`
 - **Таблицы не создались:** Проверить логи миграций в терминале
 
@@ -210,8 +194,13 @@ curl -X POST https://your-vercel-domain.vercel.app/api/users/ \
 - Bandwidth: 5GB/месяц
 - Storage: 1GB файлов
 
+### Railway (БЕСПЛАТНО):
+- 512MB RAM, 1 CPU
+- 1GB диск
+- Неограниченный трафик
+- Автоматический HTTPS
+
 ### Vercel (БЕСПЛАТНО):
-- Serverless functions: 100GB-hours/месяц
 - Bandwidth: 100GB/месяц
 - Frontend деплои: Неограничено
 - Автоматический HTTPS + CDN
@@ -222,14 +211,20 @@ curl -X POST https://your-vercel-domain.vercel.app/api/users/ \
 
 После успешного деплоя у вас будет:
 - ✅ **База данных** в Supabase (PostgreSQL 500MB)
-- ✅ **Backend API** в Vercel Serverless Functions
+- ✅ **Backend API + Telegram бот** в Railway (постоянный сервер)
 - ✅ **Frontend** в Vercel (статический сайт)
-- ✅ **Telegram бот** с командами комнат
 - ✅ **Мини-приложение** для свайпов
 - ✅ **Система матчей** и уведомлений
 
 ## 💡 Для локальной разработки:
 - Supabase предоставляет локальный development setup
-- Используйте `vercel dev` для локального тестирования serverless функций
+- Railway можно тестировать локально с `railway run`
+- Используйте `RUN_BOT=1 python -m app.main` для запуска бота локально
+
+## 🔄 Почему Railway + Vercel?
+
+- **Railway**: Для backend API и Telegram бота (нужен постоянный сервер для polling)
+- **Vercel**: Только для frontend (быстрое развертывание статических файлов)
+- **Результат**: Надежная архитектура с разделением ответственности
 
 **Поздравляем! Movie Tinder Bot готов к использованию и это 100% БЕСПЛАТНО! 🎬✨**
