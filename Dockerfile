@@ -46,4 +46,4 @@ COPY frontend/nginx/nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80 8000
 
 # Стартовый скрипт
-CMD sh -c "nginx && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+CMD sh -c "nginx -g 'daemon off;' & uvicorn app.main:app --host 0.0.0.0 --port 8000"
