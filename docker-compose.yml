@@ -1,9 +1,16 @@
-version: '3.8'
+volumes:
+  frontend_static:
+
+networks:
+  app_network:
+    driver: bridge
 
 services:
   # Backend API (FastAPI) - internal only, no external ports
   backend:
     build: ./backend
+    env_file:
+      - .env
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=${REDIS_URL}
@@ -20,6 +27,8 @@ services:
       - LOG_FILE=/app/logs/app.log
     volumes:
       - ./logs:/app/logs
+    networks:
+      - app_network
     restart: unless-stopped
     # NO PORTS EXPOSED - only internal Docker network
 
@@ -37,6 +46,8 @@ services:
       - LOG_FILE=/app/logs/bot.log
     volumes:
       - ./logs:/app/logs
+    networks:
+      - app_network
     command: ["python", "-c", "from app.bot.handlers import run_polling; run_polling()"]
     restart: unless-stopped
     depends_on:
@@ -45,9 +56,11 @@ services:
   # Frontend (React build)
   frontend:
     build: ./frontend
-    container_name: movie_frontend
     ports:
       - "80:80"
-    environment:
-      - VITE_API_BASE_URL=http://localhost/api
+    volumes:
+      - frontend_static:/usr/share/nginx/html
+    networks:
+      - app_network
     restart: unless-stopped
+    # NO PORTS EXPOSED - nginx handles it

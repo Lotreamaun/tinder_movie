@@ -13,7 +13,10 @@ from .api.swipes import router as swipes_router
 from .api.movies import router as movies_router
 from .api.matches import router as matches_router
 from fastapi.middleware.cors import CORSMiddleware
-app = FastAPI(title="Movie Tinder API", debug=settings.APP_DEBUG)
+app = FastAPI(
+    title="Movie Tinder API",
+    debug=settings.APP_DEBUG,
+    openapi_version="3.1.0")
 
 app.add_middleware(
     CORSMiddleware,
