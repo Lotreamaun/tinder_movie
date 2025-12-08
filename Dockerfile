@@ -1,6 +1,9 @@
-# Этот файл нужен только для Dockhost
-# Dockhost будет использовать docker-compose.yml, а не этот Dockerfile
+# /Dockerfile (в корне)
+# Этот файл используется только для сборки на Dockhost
+# Реальная сборка идет через docker-compose.yml
 
 FROM alpine:latest
 
-RUN echo "Docker Compose будет использован из docker-compose.yml"
+RUN echo "Using docker-compose.yml for multi-container deployment"
+
+# Dockhost будет использовать docker-compose up
