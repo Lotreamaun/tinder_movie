@@ -6,9 +6,10 @@ networks:
     driver: bridge
 
 services:
-  # Backend API (FastAPI) - internal only, no external ports
-  backend:
-    build: ./backend
+  app:  # ✅ Один сервис вместо backend + frontend
+    build: .  # ✅ Использует корневой Dockerfile
+    ports:
+      - "80:80"
     env_file:
       - .env
     environment:
@@ -20,17 +21,14 @@ services:
       - APP_HOST=0.0.0.0
       - APP_PORT=8000
       - APP_ENV=production
-      - FRONTEND_ORIGIN=http://localhost
+      - FRONTEND_ORIGIN=https://s2qv-07aa-36z6.gw-1a.dockhost.net
       - SECRET_KEY=${SECRET_KEY}
       - JWT_SECRET=${JWT_SECRET}
       - LOG_LEVEL=INFO
       - LOG_FILE=/app/logs/app.log
     volumes:
       - ./logs:/app/logs
-    networks:
-      - app_network
     restart: unless-stopped
-    # NO PORTS EXPOSED - only internal Docker network
 
   # Telegram Bot (separate service)
   bot:
@@ -46,12 +44,10 @@ services:
       - LOG_FILE=/app/logs/bot.log
     volumes:
       - ./logs:/app/logs
-    networks:
-      - app_network
     command: ["python", "-c", "from app.bot.handlers import run_polling; run_polling()"]
     restart: unless-stopped
     depends_on:
-      - backend
+      - app  # ✅ Зависит от app вместо backend
 
   # Frontend (React build)
   frontend:
