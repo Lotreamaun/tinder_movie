@@ -20,9 +20,7 @@ class UserSwipe(Base):
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     movie_id = Column(UUID(as_uuid=True), ForeignKey("movies.id", ondelete="CASCADE"), nullable=False)
     swipe_type = Column(Enum(SwipeType, name="swipe_type"), nullable=False)
-    swiped_at = Column(
-        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
-    )
+    swiped_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     group_participants = Column(JSON, nullable=False)
 
     __table_args__ = (

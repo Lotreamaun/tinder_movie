@@ -13,10 +13,18 @@ from .api.swipes import router as swipes_router
 from .api.movies import router as movies_router
 from .api.matches import router as matches_router
 from fastapi.middleware.cors import CORSMiddleware
+
 app = FastAPI(
     title="Movie Tinder API",
     debug=settings.APP_DEBUG)
 
+
+"""
+CORS middleware — это механизм безопасности
+Он позволяет указать, какие домены могут делать запросы к API
+API примет запрос и обработает его в любом случае,
+но браузер заблокирует ответ и не передаст домену, если он не в списке allow_origins
+"""
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.FRONTEND_ORIGIN],
@@ -24,6 +32,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# TODO: Написать коммент к каждому блоку кода (см. #1 в issue)
 
 app.include_router(users_router)
 app.include_router(swipes_router)
