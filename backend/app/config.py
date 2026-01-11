@@ -5,11 +5,18 @@ import os
 from typing import Optional
 from dotenv import load_dotenv
 
-# Загружаем переменные окружения ДО создания settings
+"""
+Обращается к .env и загружает их в системные переменные окружения ДО создания settings.
+Без этого os.getenv() не увидит их из .env.
+"""
 load_dotenv()
 
 class Settings:
-    """Настройки приложения"""
+    """
+    Настройки приложения:
+    Все свойства класса закружаются из .env и имеют значения по умолчанию,
+    которые будут использоваться, если переменная окружения не задана.
+    """
     
     # База данных
     DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql://user:pass@localhost:5432/tinder_movie")
@@ -28,6 +35,10 @@ class Settings:
     APP_DEBUG: bool = os.getenv("APP_ENV", "development") == "development"
     
     # CORS / Frontend
+    """
+    Указывается разрешенные домены для CORS. 
+    В проде нужно указать реальный домен, а не localhost.
+    """
     FRONTEND_ORIGIN: str = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
     
     # Безопасность
@@ -46,7 +57,6 @@ class Settings:
     MOVIES_LOAD_THRESHOLD: int = 20  # Порог для загрузки новых фильмов
     MOVIES_LOAD_BATCH: int = 30  # Количество фильмов для загрузки за раз
     MAX_MOVIES_IN_DB: int = 100  # Максимальное количество фильмов в БД (ротация)
-
 
 # Создаем экземпляр настроек
 settings = Settings()
