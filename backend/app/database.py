@@ -5,16 +5,13 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 from app.config import settings
 
-"""
-Create_engine(): создает подключение к БД, внутри объекта engine хранятся параметры доступа к БД (URL и тд)
+# Создает подключение к БД, внутри объекта engine хранятся параметры доступа к БД (URL и тд)
+    # Args:
+        # settings.DATABASE_URL — подтягивает URL из файла конфигурации
+        # pool_pre_ping=True — проверка соединения перед использованием (важно для прода)
+        # future=True - включает интерфейс API SQAlchemy 2.0
 
-Args:
-    settings.DATABASE_URL — подтягивает URL из файла конфигурации
-    pool_pre_ping=True — проверка соединения перед использованием (важно для прода)
-    future=True - включает интерфейс API SQAlchemy 2.0
-
-Engine создается только один раз — при запуске приложения
-"""
+    # Engine создается только один раз — при запуске приложения
 engine = create_engine(settings.DATABASE_URL, pool_pre_ping=True, future=True)
 
 """
