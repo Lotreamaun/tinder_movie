@@ -1,4 +1,4 @@
-import uuid
+"""Модель комнаты для группового просмотра фильмов."""
 from datetime import datetime, timezone
 
 from sqlalchemy import Column, DateTime, Index, String
@@ -9,6 +9,11 @@ from app.database import Base
 
 
 class Room(Base):
+    """Комната для группового просмотра фильмов.
+
+    participants — список telegram_id участников комнаты (хранится как JSON,
+    а не отдельная таблица, для простоты и скорости чтения состава группы).
+    """
     __tablename__ = "rooms"
 
     id = Column(String, primary_key=True)  # Уникальный код комнаты (например, "ABC123")

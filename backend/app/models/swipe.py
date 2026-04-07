@@ -1,3 +1,4 @@
+"""Модель для хранения информации о свайпах пользователей по фильмам в контексте группового просмотра."""
 import enum
 import uuid
 from datetime import datetime, timezone
@@ -14,6 +15,15 @@ class SwipeType(str, enum.Enum):
 
 
 class UserSwipe(Base):
+    """Свайп пользователя по фильму в контексте конкретной группы.
+
+    group_participants — список telegram_id участников группы на момент свайпа,
+    позволяет восстановить кто именно из участников голосовал.
+
+    UniqueConstraint гарантирует, что один пользователь не свайпнет один фильм
+    дважды в рамках одного и того же состава группы. Это означает, что не может быть 
+    двух строк с одинаковыми user_id, movie_id и group_participants.
+    """
     __tablename__ = "user_swipes"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

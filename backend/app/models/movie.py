@@ -1,7 +1,8 @@
-import uuid
-from datetime import datetime, timezone
+"""Модель данных для фильма"""
+import uuid  # Генерация уникальных id для записи в таблице
+from datetime import datetime, timezone  # Время по Гринвичу (всемирное координированное время)
 
-from sqlalchemy import Boolean, Column, DateTime, Float, Index, Integer, String, Text
+from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.database import Base
@@ -22,10 +23,4 @@ class Movie(Base):
     created_at = Column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
     )
-    is_active = Column(Boolean, default=True, nullable=False)
-
-    __table_args__ = (
-        Index("idx_movies_kinopoisk_id", "kinopoisk_id"),
-    )
-
-
+    is_active = Column(Boolean, default=True, nullable=False)  # Статус фильма - отображается или скрыт
