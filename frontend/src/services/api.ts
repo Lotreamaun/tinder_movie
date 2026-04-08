@@ -84,7 +84,8 @@ interface ApiResponse<T> {
 }
 
 const api = axios.create({
-  baseURL: 'api',
+  // В dev-режиме Vite проксирует `/api/*` в FastAPI. Оставляем baseURL пустым, чтобы не получить `/api/api/*`.
+  baseURL: '',
   timeout: 10000, // 10 секунд
   headers: {
     'Content-Type': 'application/json',

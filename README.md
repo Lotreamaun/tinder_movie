@@ -174,7 +174,7 @@ tinder_movie/
 ## Инструкция для запуска на локалхосте
 
 1. Запускаешь БД:
-    - brew services start postgresql
+    - brew services start postgresql@14
     - входишь в свою БД: psql -U lotreamaun -d tinder_movie_dev
 2. Запускаешь FastAPI:
     - uvicorn app.main:app --reload
