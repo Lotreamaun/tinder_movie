@@ -1,12 +1,10 @@
 """
-Точка входа для Movie Tinder Bot
+Точка входа для Movie Tinder Bot API
 """
 
 # TODO: Написать коммент к каждому блоку кода (см. #1 в issue)
 
-import os
 from dotenv import load_dotenv
-from app.bot.handlers import run_polling
 
 from app.config import settings
 from app.logging_config import setup_logging
@@ -81,32 +79,20 @@ def health_check():
 
 def main():
     """Основная функция запуска приложения"""
-    # Загружаем переменные окружения
     load_dotenv()
-    
-    # Настраиваем логирование
     logger = setup_logging(settings.LOG_LEVEL, settings.LOG_FILE)
-    
+
     logger.info("=" * 50)
-    logger.info("Movie Tinder Bot - Запуск приложения")
+    logger.info("Movie Tinder Bot API - Запуск приложения")
     logger.info("=" * 50)
     logger.info(f"Режим: {'development' if settings.APP_DEBUG else 'production'}")
     logger.info(f"Хост: {settings.APP_HOST}:{settings.APP_PORT}")
     logger.info(f"База данных: {settings.DATABASE_URL.split('@')[1] if '@' in settings.DATABASE_URL else 'не настроена'}")
     logger.info(f"Telegram Bot Token: {'настроен' if settings.TELEGRAM_BOT_TOKEN else 'НЕ НАСТРОЕН'}")
     logger.info("=" * 50)
-    
+
     print("Приложение запущено")
     logger.info("Приложение успешно запущено")
-
-    """
-    run_polling() — это функция, которая фактически запускает Telegram-бот.
-    Опциональный запуск нужен, чтобы не запускать бота, если он не настроен
-    или чтобы можно было отдельно запускать бота и API
-    """
-    # Опциональный запуск Telegram-бота по флагу окружения
-    if os.getenv("RUN_BOT") == "1":
-        run_polling()
 
 """
 Это защита от случайного запуска скрипта при импорте модуля:
