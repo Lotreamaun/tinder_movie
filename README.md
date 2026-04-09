@@ -274,7 +274,9 @@ Alembic миграции для управления схемой БД.
    - `psql -U lotreamaun -d tinder_movie_dev`
 2. **Запускаешь FastAPI:**
    - `uvicorn app.main:app --reload` (из папки `backend/`)
-3. **Запускаешь frontend:**
+3. **Запускаешь Bot:**
+   - `python3 -m app.run_bot` (из папки `backend/`)
+4. **Запускаешь frontend:**
    - `npm run dev` (из папки `frontend/`)
 
 ---
