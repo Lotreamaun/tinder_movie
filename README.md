@@ -115,7 +115,7 @@ tinder_movie/
 | Файл | Ответственность |
 |------|-----------------|
 | `app/main.py` | Точка входа: создание FastAPI-приложения, CORS middleware, роутеры, условный запуск бота |
-| `app/config.py` | Загрузка переменных окружения через `pydantic-settings` (БД, Redis, бот, Kinopoisk, CORS, JWT, бизнес-лимиты) |
+| `app/config.py` | Загрузка переменных окружения (БД, бот, Kinopoisk, CORS, JWT, бизнес-лимиты) |
 | `app/database.py` | SQLAlchemy: engine, session factory, `Base`, dependency `get_db()` |
 | `app/logging_config.py` | Логирование: console + rotating file (`app.log`, `errors.log`) |
 

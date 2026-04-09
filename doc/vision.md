@@ -7,7 +7,6 @@
 - **FastAPI** - современный, быстрый веб-фреймворк с автоматической документацией
 - **SQLAlchemy** - ORM для работы с БД
 - **PostgreSQL** - основная БД для пользователей, фильмов, матчей
-- **Redis** - кэширование и временное хранение сессий
 - **Pydantic** - валидация данных (встроен в FastAPI)
 
 ### Frontend (Mini App)
@@ -143,7 +142,7 @@ tinder_movie/
 ┌─────────────────────────────────────────────────────────────┐
 │                    Слой данных                             │
 ├─────────────────────────────────────────────────────────────┤
-│  PostgreSQL  │  Redis Cache  │  Kinopoisk API            │
+│  PostgreSQL  │  Kinopoisk API              │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -172,7 +171,6 @@ tinder_movie/
 
 **5. Слой данных:**
 - **PostgreSQL** - пользователи, фильмы, матчи
-- **Redis** - кэш фильмов, сессии
 - **Kinopoisk API** - получение информации о фильмах
 
 ## 5. Модель данных
@@ -372,7 +370,7 @@ services:
     ports: ["8000:8000"]
     environment:
       - DATABASE_URL=postgresql://user:pass@db:5432/tinder_movie
-    depends_on: [db, redis]
+    depends_on: [db]
   
   frontend:
     build: ./frontend
@@ -387,10 +385,6 @@ services:
       - POSTGRES_USER=user
       - POSTGRES_PASSWORD=pass
     volumes: ["postgres_data:/var/lib/postgresql/data"]
-  
-  redis:
-    image: redis:7-alpine
-    ports: ["6379:6379"]
 ```
 
 ## 8. Конфигурирование
@@ -401,7 +395,6 @@ services:
 ```bash
 # База данных
 DATABASE_URL=postgresql://user:password@localhost:5432/tinder_movie
-REDIS_URL=redis://localhost:6379
 
 # Telegram Bot
 TELEGRAM_BOT_TOKEN=your_bot_token_here
@@ -428,8 +421,7 @@ from typing import Optional
 class Settings:
     # База данных
     DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql://user:pass@localhost:5432/tinder_movie")
-    REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379")
-    
+
     # Telegram
     TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
     

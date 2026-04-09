@@ -93,7 +93,6 @@ def main():
     logger.info(f"Режим: {'development' if settings.APP_DEBUG else 'production'}")
     logger.info(f"Хост: {settings.APP_HOST}:{settings.APP_PORT}")
     logger.info(f"База данных: {settings.DATABASE_URL.split('@')[1] if '@' in settings.DATABASE_URL else 'не настроена'}")
-    logger.info(f"Redis: {settings.REDIS_URL}")
     logger.info(f"Telegram Bot Token: {'настроен' if settings.TELEGRAM_BOT_TOKEN else 'НЕ НАСТРОЕН'}")
     logger.info("=" * 50)
     

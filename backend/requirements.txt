@@ -7,9 +7,6 @@ sqlalchemy==2.0.23
 alembic==1.12.1
 psycopg2-binary==2.9.9
 
-# Кэширование
-redis==5.0.1
-
 # Telegram Bot
 python-telegram-bot==20.7
 
