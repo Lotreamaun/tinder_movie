@@ -2,7 +2,8 @@ from typing import Optional, Sequence
 import random
 import string
 
-from sqlalchemy import select
+from sqlalchemy import select, cast
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
 from app.models.room import Room
@@ -187,8 +188,11 @@ class RoomService:
         Returns:
             Optional[Room]: Текущая комната пользователя или None
         """
-        stmt = select(Room).where(Room.participants.contains([user.telegram_id]))
-        return db.execute(stmt).first()
+        stmt = select(Room).where(
+            cast(Room.participants, JSONB).op("@>")([user.telegram_id])
+        )
+        result = db.execute(stmt).scalar_one_or_none()
+        return result
 
     def list_user_rooms(self, db: Session, user: User, limit: int = 10) -> Sequence[Room]:
         """
@@ -202,7 +206,9 @@ class RoomService:
         Returns:
             Sequence[Room]: Список комнат пользователя
         """
-        stmt = select(Room).where(Room.participants.contains([user.telegram_id])).limit(limit)
+        stmt = select(Room).where(
+            cast(Room.participants, JSONB).op("@>")([user.telegram_id])
+        ).limit(limit)
         return list(db.execute(stmt).scalars())
 
 
