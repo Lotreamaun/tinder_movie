@@ -93,9 +93,8 @@ class RoomService:
         if len(room.participants) >= settings.MAX_ROOM_SIZE:
             raise ValueError(f"Комната заполнена (максимум {settings.MAX_ROOM_SIZE} участников)")
 
-        # Добавляем пользователя
-        room.participants.append(user.telegram_id)
-        db.add(room)
+        # Добавляем пользователя (переназначаем, чтобы SQLAlchemy заметил изменение JSON)
+        room.participants = room.participants + [user.telegram_id]
         db.commit()
         db.refresh(room)
 
@@ -123,8 +122,8 @@ class RoomService:
         if user.telegram_id not in room.participants:
             raise ValueError("Вы не состоите в этой комнате")
 
-        # Удаляем пользователя
-        room.participants.remove(user.telegram_id)
+        # Удаляем пользователя (переназначаем, чтобы SQLAlchemy заметил изменение JSON)
+        room.participants = [p for p in room.participants if p != user.telegram_id]
 
         # Если комната пуста - удаляем её
         if not room.participants:
