@@ -1,3 +1,4 @@
+"""API-эндпоинты для работы со свайпами: создание свайпа, получение свайпов пользователя и т.д."""
 from fastapi import APIRouter, HTTPException, Depends, Header
 from uuid import UUID
 from typing import Annotated
@@ -38,13 +39,15 @@ def create_swipe(
     """
     try:
         # Получаем пользователя по telegram_id
+        logger.info("Swipe request: telegram_id=%s, movie_id=%s, swipe_type=%s", telegram_id, swipe.movie_id, swipe.swipe_type)
         user = user_service.get_user_by_telegram_id(db, telegram_id)
         if not user:
+            logger.warning("User not found: telegram_id=%s", telegram_id)
             raise HTTPException(status_code=404, detail="User not found")
 
-        # Создаем свайп (идемпотентно) с нормализацией внутри сервиса
+        # Создаем свайп (идемпотентно, т.е. дубликат не будет создан) с нормализацией внутри сервиса
         db_swipe = swipe_service.create_swipe(db=db, **swipe.model_dump(), user_id=str(user.id))
-        
+
         # Проверяем на матч если это лайк
         if swipe.swipe_type == 'like':
             match_found = swipe_service.check_match(
@@ -53,10 +56,10 @@ def create_swipe(
                 group_participants=swipe.group_participants
             )
             if match_found:
-                logger.info(f"Match found for movie {swipe.movie_id} and group {swipe.group_participants}")
+                logger.info("Match found for movie %s and group %s", swipe.movie_id, swipe.group_participants)
                 # Создаем матч в БД
                 match_service.create_match(db=db, movie_id=swipe.movie_id, group_participants=swipe.group_participants)
-        
+
         # Расширяем ответ полем match_found
         try:
             match_found = swipe_service.check_match(
@@ -71,15 +74,17 @@ def create_swipe(
         response_data = SwipeResponse.model_validate(db_swipe).model_dump()
         response_data["match_found"] = match_found
         return ApiResponse(success=True, data=SwipeResponseWithMatch(**response_data))
-    
+
+    except HTTPException:
+        raise
     except ValueError as e:
-        logger.warning(f"Invalid swipe data: {e}")
+        logger.warning("Invalid swipe data: %s", e)
         raise HTTPException(
             status_code=400,
             detail=str(e)
         )
     except Exception as e:
-        logger.error(f"Failed to create swipe: {e}", exc_info=True)
+        logger.error("Failed to create swipe: %s", e, exc_info=True)
         raise HTTPException(
             status_code=500,
             detail="Internal server error"

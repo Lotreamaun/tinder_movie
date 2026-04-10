@@ -5,6 +5,7 @@ import asyncio
 import threading
 from telegram import Bot
 from telegram.error import TelegramError
+from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models.match import Match

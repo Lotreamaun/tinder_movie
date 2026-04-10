@@ -13,6 +13,7 @@ from .api.users import router as users_router
 from .api.swipes import router as swipes_router
 from .api.movies import router as movies_router
 from .api.matches import router as matches_router
+from .api.rooms import router as rooms_router
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(
@@ -52,6 +53,7 @@ app.include_router(users_router)
 app.include_router(swipes_router)
 app.include_router(movies_router)
 app.include_router(matches_router)
+app.include_router(rooms_router)
 
 
 """

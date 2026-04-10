@@ -1,3 +1,7 @@
+"""
+API-эндпоинты для работы с матчами: получение матчей для группы участников, 
+получение конкретного матча по ID, проверка статуса голосования по фильму и группе участников.
+"""
 from fastapi import APIRouter, HTTPException, Depends, Query
 from uuid import UUID
 from typing import Annotated
@@ -103,7 +107,8 @@ def get_vote_status(
         group_participants = swipe_service.normalize_group_participants(group_participants)
 
         # Запрашиваем все голоса по фильму и группе
-        from sqlalchemy import and_, select
+        from sqlalchemy import and_, select, cast
+        from sqlalchemy.dialects.postgresql import JSONB
         from app.models.swipe import UserSwipe
         from app.models.user import User
 
@@ -113,7 +118,8 @@ def get_vote_status(
             .where(
                 and_(
                     UserSwipe.movie_id == str(movie_id),
-                    UserSwipe.group_participants == group_participants,
+                    # с помощью cast и оператора @> проверяем, что массив участников в базе содержит всех участников из запроса
+                    cast(UserSwipe.group_participants, JSONB).op("@>")(group_participants),
                 )
             )
         )

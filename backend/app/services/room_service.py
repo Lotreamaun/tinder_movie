@@ -1,3 +1,4 @@
+"""Сервис для управления комнатами: создание, присоединение, выход, получение информации и т.д."""
 from typing import Optional, Sequence
 import random
 import string
@@ -173,6 +174,7 @@ class RoomService:
             "creator_id": room.creator_id,
             "participants_count": len(room.participants),
             "participants": participants_info,
+            "participant_ids": room.participants,  # Плоский массив telegram_id для фронта
             "created_at": room.created_at
         }
 

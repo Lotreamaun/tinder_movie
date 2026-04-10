@@ -1,11 +1,31 @@
+"""Логика работы с матчами: создание, получение, проверка существующих матчей и т.д."""
 from typing import Optional, Sequence
 
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, cast
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.match import Match
 
 class MatchService:
+
+    @staticmethod
+    def _group_contains(col, value: list[int]):
+        """
+        JSONB-оператор @> для сравнения массивов участников.
+
+        Проверяет, содержит ли левый массив все элементы правого массива, 
+        независимо от порядка и наличия дубликатов.
+
+        Args:
+            col: Колонка модели, содержащая JSONB массив участников
+            value: Список telegram_id участников для проверки
+
+        Returns:
+            SQLAlchemy выражение для фильтрации
+        """
+        return cast(col, JSONB).op("@>")(value)
+
     def check_existing_match(self, db: Session, movie_id: str, group_participants: list[int]) -> Optional[Match]:
         """
         Проверяет, существует ли уже матч для данного фильма и группы.
@@ -21,7 +41,7 @@ class MatchService:
         stmt = select(Match).where(
             and_(
                 Match.movie_id == movie_id,
-                Match.group_participants == group_participants
+                self._group_contains(Match.group_participants, group_participants)
             )
         )
         return db.execute(stmt).scalar_one_or_none()
@@ -60,7 +80,7 @@ class MatchService:
             db.commit()
         except Exception as e:
             from app.logging_config import logger
-            logger.error(f"Failed to send match notification: {e}", exc_info=True)
+            logger.error("Failed to send match notification: %s", e, exc_info=True)
             # Не падаем, матч уже создан
         
         return match
@@ -69,7 +89,7 @@ class MatchService:
     def list_matches_for_group(self, db: Session, group_participants: list[int], limit: int = 50, offset: int = 0) -> Sequence[Match]:
         stmt = (
         select(Match)
-        .where(Match.group_participants == group_participants)
+        .where(self._group_contains(Match.group_participants, group_participants))
         .order_by(Match.matched_at.desc())
         .limit(limit)
         .offset(offset)

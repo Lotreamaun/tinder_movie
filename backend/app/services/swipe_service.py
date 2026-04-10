@@ -1,6 +1,8 @@
+"""Логика работы со свайпами: создание, получение, проверка матчей и т.д."""
 from typing import Optional, Sequence
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, select, cast
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.swipe import SwipeType, UserSwipe
@@ -14,6 +16,24 @@ class SwipeService:
         Возвращает отсортированный по возрастанию список telegram_id без дубликатов.
         """
         return sorted(set(group_participants))
+
+    @staticmethod
+    def _group_contains(col, value: list[int]):
+        """
+        JSONB-оператор @> для сравнения массивов участников.
+
+        Проверяет, содержит ли левый массив все элементы правого массива, 
+        независимо от порядка и наличия дубликатов.
+
+        Args:
+            col: Колонка модели, содержащая JSONB массив участников
+            value: Список telegram_id участников для проверки
+
+        Returns:
+            SQLAlchemy выражение для фильтрации
+        """
+        return cast(col, JSONB).op("@>")(value)
+
     def create_swipe(
         self,
         db: Session,
@@ -82,7 +102,7 @@ class SwipeService:
             and_(
                 UserSwipe.user_id == user_id,
                 UserSwipe.movie_id == movie_id,
-                UserSwipe.group_participants == group_participants,
+                self._group_contains(UserSwipe.group_participants, group_participants),
             )
         )
         return db.execute(stmt).scalar_one_or_none()
@@ -124,7 +144,7 @@ class SwipeService:
                     and_(
                         UserSwipe.movie_id == movie_id,
                         UserSwipe.swipe_type == 'like',
-                        UserSwipe.group_participants == group_participants
+                        self._group_contains(UserSwipe.group_participants, group_participants)
                     )
                 )
             )
