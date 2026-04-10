@@ -278,6 +278,8 @@ Alembic миграции для управления схемой БД.
    - `python3 -m app.run_bot` (из папки `backend/`)
 4. **Запускаешь frontend:**
    - `npm run dev` (из папки `frontend/`)
+5. **Нужно пробросить порт через ngrok:**
+   - `ngrok http <порт>`
 
 ---
 
