@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { MovieCard } from './components/MovieCard';
-import { getRandomMovie, createSwipe, ApiError } from './services/api';
+import { MatchOverlay } from './components/MatchOverlay';
+import { getRandomMovie, createSwipe, getMyRoom, ApiError } from './services/api';
 import './App.css';
 import type { Movie } from './types/movie_types';
 
@@ -20,29 +21,62 @@ function App() {
   // 5. Загрузка при свайпе
   const [isSwipeInProgress, setIsSwipeInProgress] = useState<boolean>(false);
 
-  // 6. Telegram ID (временно из localStorage, можно заменить на вызов API)
+  // 6. Telegram ID
   const [telegramId, setTelegramId] = useState<number | null>(null);
+
+  // 7. Участники комнаты (для групповых свайпов)
+  const [groupParticipants, setGroupParticipants] = useState<number[]>([]);
+
+  // 8. Мэтч — фильм, по которому найден матч
+  const [matchedMovie, setMatchedMovie] = useState<Movie | null>(null);
+
+  // Ref-копия очереди — чтобы handleSwipe всегда видел актуальное значение
+  const movieQueueRef = useRef<Movie[]>(_movieQueue);
+
+  useEffect(() => {
+    movieQueueRef.current = _movieQueue;
+  }, [_movieQueue]);
 
   // Загружаем первый фильм и telegramId при монтировании компонента
   useEffect(() => {
     const initializeApp = async () => {
       try {
-        // Попробуем получить telegramId из localStorage
-        const storedTelegramId = localStorage.getItem('telegramId');
-        if (storedTelegramId) {
-          setTelegramId(Number(storedTelegramId));
+        // 1. Пробуем получить реальный telegramId из Telegram WebApp API
+        const tg = window.Telegram?.WebApp;
+        const tgUserId = tg?.initDataUnsafe?.user?.id;
+
+        if (tgUserId) {
+          setTelegramId(tgUserId);
+          console.log('Telegram ID from WebApp:', tgUserId);
         } else {
-          // Dev fallback для удобного локального теста
-          const devId = import.meta.env.VITE_DEV_TELEGRAM_ID;
-          if (import.meta.env.DEV && devId) {
-            const parsed = Number(devId);
-            if (!Number.isNaN(parsed)) {
-              setTelegramId(parsed);
+          // 2. Фоллбэк: localStorage (для тестов в браузере)
+          const storedTelegramId = localStorage.getItem('telegramId');
+          if (storedTelegramId) {
+            setTelegramId(Number(storedTelegramId));
+            console.log('Telegram ID from localStorage:', storedTelegramId);
+          } else {
+            // 3. Dev fallback: .env (только локальная разработка)
+            const devId = import.meta.env.VITE_DEV_TELEGRAM_ID;
+            if (import.meta.env.DEV && devId) {
+              const parsed = Number(devId);
+              if (!Number.isNaN(parsed)) {
+                setTelegramId(parsed);
+                console.warn('Using VITE_DEV_TELEGRAM_ID from .env:', parsed);
+              }
             }
           }
-          // В реальном приложении: вызвать API, чтобы получить telegramId
-          // const user = await api.getCurrentUser();
-          // setTelegramId(user.telegramId);
+        }
+
+        // Загружаем комнату пользователя (нужно для групповых свайпов)
+        const currentTgId = tgUserId || (localStorage.getItem('telegramId') ? Number(localStorage.getItem('telegramId')) : null);
+        if (currentTgId) {
+          const room = await getMyRoom(currentTgId);
+          if (room && room.participantIds) {
+            setGroupParticipants(room.participantIds);
+            console.log('Room participants:', room.participantIds);
+          } else {
+            console.warn('User is not in any room — swipes require 2+ participants');
+          }
         }
 
         setError(null);
@@ -74,57 +108,53 @@ function App() {
     initializeApp();
   }, []);
 
-  // Функция для обработки свайпа
-  const handleSwipe = async (swipeType: 'like' | 'dislike') => {
+  // Функция для обработки свайпа — через useCallback чтобы всегда видеть актуальный currentMovie
+  const handleSwipe = useCallback(async (swipeType: 'like' | 'dislike') => {
     if (!currentMovie || isSwipeInProgress || !telegramId) return;
+
+    if (groupParticipants.length < 2) {
+      setError('Нужно минимум 2 участника в комнате для свайпов');
+      return;
+    }
 
     try {
       setIsSwipeInProgress(true);
-      setError(null); // Сбрасываем ошибку
+      setError(null);
 
-      await createSwipe({
+      const swipeResult = await createSwipe({
         movieId: currentMovie.id,
         swipeType,
-        groupParticipants: [],
+        groupParticipants,
         telegramId,
       });
 
-      // Поп и выбор следующего фильма + решение о предзагрузке — в одном функциональном апдейтере
-      let needFetchNext = false;
-      let needPreload = false;
-
-      setMovieQueue(prev => {
-        let next: Movie | null = null;
-        let newQueue: Movie[] = prev;
-
-        if (prev.length > 0) {
-          const [first, ...rest] = prev;
-          next = first;
-          newQueue = rest;
-        } else {
-          next = null;
-        }
-
-        // Обновляем текущий фильм, рассчитанный из prev
-        setCurrentMovie(next);
-
-        // Фиксируем решения, чтобы выполнить асинхронные действия после апдейта очереди
-        needFetchNext = next === null;
-        needPreload = newQueue.length < 3;
-
-        return newQueue;
-      });
-
-      // Если не было следующего фильма в очереди — загружаем новый
-      if (needFetchNext) {
-        const fetched = await getRandomMovie();
-        setCurrentMovie(fetched);
+      // Проверяем, найден ли мэтч
+      if (swipeResult?.matchFound) {
+        setMatchedMovie(currentMovie);
       }
 
-      // Если очередь стала короткой — предзагружаем ещё один
-      if (needPreload) {
-        const preload = await getRandomMovie();
-        setMovieQueue(prev => [...prev, preload]);
+      // Берём следующий фильм из очереди (через ref — всегда актуально)
+      const queue = movieQueueRef.current;
+
+      if (queue.length > 0) {
+        const [next, ...rest] = queue;
+        setCurrentMovie(next);
+        setMovieQueue(rest);
+
+        // Предзагружаем если осталось меньше 3
+        if (rest.length < 3) {
+          getRandomMovie().then(m => {
+            setMovieQueue(q => [...q, m]);
+          });
+        }
+      } else {
+        // Очередь пуста — загружаем новый
+        const movie = await getRandomMovie();
+        setCurrentMovie(movie);
+        // Предзагружаем следующий в фоне
+        getRandomMovie().then(m => {
+          setMovieQueue([m]);
+        });
       }
 
     } catch (err) {
@@ -133,7 +163,7 @@ function App() {
     } finally {
       setIsSwipeInProgress(false);
     }
-  };
+  }, [currentMovie, isSwipeInProgress, telegramId, groupParticipants]);
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -177,6 +207,14 @@ function App() {
           )}
         </div>
       </div>
+
+      {/* Match Overlay */}
+      {matchedMovie && (
+        <MatchOverlay
+          movie={matchedMovie}
+          onDismiss={() => setMatchedMovie(null)}
+        />
+      )}
     </div>
   );
 }

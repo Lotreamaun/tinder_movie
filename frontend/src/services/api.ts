@@ -182,6 +182,23 @@ export async function getRandomMovie(): Promise<Movie> {
   }
 
 /**
+ * Получает текущую комнату пользователя
+ */
+export async function getMyRoom(telegramId: number): Promise<{ participantIds: number[] } | null> {
+  try {
+    const response = await api.get('/api/rooms/my', {
+      headers: {
+        'telegram-id': telegramId.toString(),
+      },
+    });
+    if (!response) return null;
+    return response as unknown as { participantIds: number[] };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Отправляет свайп (лайк/дизлайк) на сервер
  */
 export async function createSwipe(params: {
