@@ -27,7 +27,10 @@ function App() {
   // 7. Участники комнаты (для групповых свайпов)
   const [groupParticipants, setGroupParticipants] = useState<number[]>([]);
 
-  // 8. Мэтч — фильм, по которому найден матч
+  // 8. Код текущей комнаты (для общего колода фильмов)
+  const [roomCode, setRoomCode] = useState<string | null>(null);
+
+  // 9. Мэтч — фильм, по которому найден матч
   const [matchedMovie, setMatchedMovie] = useState<Movie | null>(null);
 
   // Ref-копия очереди — чтобы handleSwipe всегда видел актуальное значение
@@ -69,11 +72,15 @@ function App() {
 
         // Загружаем комнату пользователя (нужно для групповых свайпов)
         const currentTgId = tgUserId || (localStorage.getItem('telegramId') ? Number(localStorage.getItem('telegramId')) : null);
+        let currentRoomCode: string | null = null;
         if (currentTgId) {
           const room = await getMyRoom(currentTgId);
           if (room && room.participantIds) {
             setGroupParticipants(room.participantIds);
+            currentRoomCode = room.roomCode ?? null;
+            setRoomCode(currentRoomCode);
             console.log('Room participants:', room.participantIds);
+            console.log('Room code:', currentRoomCode);
           } else {
             console.warn('User is not in any room — swipes require 2+ participants');
           }
@@ -82,13 +89,16 @@ function App() {
         setError(null);
         setIsLoading(true);
 
-        // Загружаем 5 фильмов заранее
+        // Загружаем 5 фильмов заранее (из общего колода комнаты, если она есть)
+        const roomParams = currentRoomCode && currentTgId
+          ? { roomCode: currentRoomCode, telegramId: currentTgId }
+          : undefined;
         const movies = await Promise.all([
-          getRandomMovie(),
-          getRandomMovie(),
-          getRandomMovie(),
-          getRandomMovie(),
-          getRandomMovie(),
+          getRandomMovie(roomParams),
+          getRandomMovie(roomParams),
+          getRandomMovie(roomParams),
+          getRandomMovie(roomParams),
+          getRandomMovie(roomParams),
         ]);
 
         setMovieQueue(movies);
@@ -143,16 +153,25 @@ function App() {
 
         // Предзагружаем если осталось меньше 3
         if (rest.length < 3) {
-          getRandomMovie().then(m => {
+          getRandomMovie({
+            roomCode: roomCode ?? undefined,
+            telegramId: telegramId ?? undefined,
+          }).then(m => {
             setMovieQueue(q => [...q, m]);
           });
         }
       } else {
         // Очередь пуста — загружаем новый
-        const movie = await getRandomMovie();
+        const movie = await getRandomMovie({
+          roomCode: roomCode ?? undefined,
+          telegramId: telegramId ?? undefined,
+        });
         setCurrentMovie(movie);
         // Предзагружаем следующий в фоне
-        getRandomMovie().then(m => {
+        getRandomMovie({
+          roomCode: roomCode ?? undefined,
+          telegramId: telegramId ?? undefined,
+        }).then(m => {
           setMovieQueue([m]);
         });
       }
@@ -163,7 +182,7 @@ function App() {
     } finally {
       setIsSwipeInProgress(false);
     }
-  }, [currentMovie, isSwipeInProgress, telegramId, groupParticipants]);
+  }, [currentMovie, isSwipeInProgress, telegramId, groupParticipants, roomCode]);
 
   return (
     <div className="min-h-screen bg-background text-foreground">

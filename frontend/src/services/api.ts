@@ -175,16 +175,33 @@ api.interceptors.response.use(
 // =============================================================================
 
 /**
- * Получает случайный фильм с сервера
+ * Получает следующий фильм с сервера.
+ * Вне комнаты — случайный фильм; с roomCode — из общего колода комнаты.
  */
-export async function getRandomMovie(): Promise<Movie> {
-    return api.get('/api/movies/random');
+export async function getRandomMovie(params?: {
+  roomCode?: string;
+  telegramId?: number;
+}): Promise<Movie> {
+  const query: string[] = [];
+  const config: { headers?: Record<string, string> } = {};
+
+  if (params?.roomCode) {
+    query.push(`room_code=${encodeURIComponent(params.roomCode)}`);
   }
+  if (params?.telegramId) {
+    config.headers = { 'telegram-id': params.telegramId.toString() };
+  }
+
+  const url = query.length > 0 ? `/api/movies/random?${query.join('&')}` : '/api/movies/random';
+  return api.get(url, config);
+}
 
 /**
  * Получает текущую комнату пользователя
  */
-export async function getMyRoom(telegramId: number): Promise<{ participantIds: number[] } | null> {
+export async function getMyRoom(
+  telegramId: number
+): Promise<{ participantIds: number[]; roomCode: string } | null> {
   try {
     const response = await api.get('/api/rooms/my', {
       headers: {
@@ -192,7 +209,7 @@ export async function getMyRoom(telegramId: number): Promise<{ participantIds: n
       },
     });
     if (!response) return null;
-    return response as unknown as { participantIds: number[] };
+    return response as unknown as { participantIds: number[]; roomCode: string };
   } catch {
     return null;
   }
