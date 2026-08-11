@@ -6,8 +6,10 @@ from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
 from app.models.movie import Movie
+from app.models.user import User
 from app.config import settings
 from app.logging_config import logger
+from app.services.deck_service import deck_service
 
 class MovieService:
     def create_movie(
@@ -37,9 +39,18 @@ class MovieService:
         db.refresh(movie)
         return movie
     
-    def get_random_movie(self, db: Session) -> Optional[Movie]:
+    def get_random_movie(
+        self,
+        db: Session,
+        user: Optional[User] = None,
+        room_code: Optional[str] = None,
+    ) -> Optional[Movie]:
         """
-        Получает случайный фильм. Автоматически поддерживает запас фильмов в БД.
+        Получает следующий фильм для свайпов.
+
+        Для участника комнаты (room_code + user) возвращает фильм из общего
+        упорядоченного колода комнаты (см. DeckService). Вне комнаты — случайный
+        фильм из общей базы. Автоматически поддерживает запас фильмов в БД.
 
         NOTE: Текущая реализация использует простую ротацию контента (удаление старых фильмов).
         TODO: В будущем реализовать персонализированную систему:
@@ -48,9 +59,13 @@ class MovieService:
         - Персонализировать рекомендации на основе предпочтений
 
         Returns:
-            Случайный фильм или None если нет фильмов и не удалось загрузить
+            Фильм или None если нет фильмов и не удалось загрузить
         """
         from app.config import settings
+
+        # В комнате фильмы выдаются из общего колода комнаты.
+        if room_code and user is not None:
+            return deck_service.get_next_movie_for_room(db=db, user=user, room_code=room_code)
 
         # Считаем количество фильмов в БД
         total_movies = db.query(func.count(Movie.id)).scalar()
