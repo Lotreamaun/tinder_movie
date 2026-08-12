@@ -24,24 +24,24 @@ export class ApiError extends Error {
 /**
  * Рекурсивно преобразует ключи объекта из snake_case в camelCase
  */
-export function snakeToCamel(obj: any): any {
+export function snakeToCamel<T>(obj: T): T {
   if (obj === null || obj === undefined) {
     return obj;
   }
 
   if (Array.isArray(obj)) {
-    return obj.map(snakeToCamel);
+    return (obj as unknown[]).map((item) => snakeToCamel(item)) as T;
   }
 
   if (typeof obj === 'object') {
-    const converted: Record<string, any> = {};
+    const converted: Record<string, unknown> = {};
     for (const key in obj) {
       if (Object.prototype.hasOwnProperty.call(obj, key)) {
         const camelKey = key.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
-        converted[camelKey] = snakeToCamel(obj[key]);
+        converted[camelKey] = snakeToCamel((obj as Record<string, unknown>)[key]);
       }
     }
-    return converted;
+    return converted as T;
   }
 
   return obj; // примитивные значения (string, number, boolean и т.д.)
@@ -50,24 +50,24 @@ export function snakeToCamel(obj: any): any {
 /**
  * Рекурсивно преобразует ключи объекта из camelCase в snake_case
  */
-export function camelToSnake(obj: any): any {
+export function camelToSnake<T>(obj: T): T {
   if (obj === null || obj === undefined) {
     return obj;
   }
 
   if (Array.isArray(obj)) {
-    return obj.map(camelToSnake);
+    return (obj as unknown[]).map((item) => camelToSnake(item)) as T;
   }
 
   if (typeof obj === 'object') {
-    const converted: Record<string, any> = {};
+    const converted: Record<string, unknown> = {};
     for (const key in obj) {
       if (Object.prototype.hasOwnProperty.call(obj, key)) {
         const snakeKey = key.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
-        converted[snakeKey] = camelToSnake(obj[key]);
+        converted[snakeKey] = camelToSnake((obj as Record<string, unknown>)[key]);
       }
     }
-    return converted;
+    return converted as T;
   }
 
   return obj;
@@ -112,7 +112,7 @@ api.interceptors.request.use(
 
 // Response interceptor
 api.interceptors.response.use(
-  (response: AxiosResponse<ApiResponse<any> | any>) => {
+  (response: AxiosResponse<unknown>): AxiosResponse => {
     if (import.meta.env.DEV) {
       console.log('← API Response:', {
         status: response.status,
@@ -123,17 +123,17 @@ api.interceptors.response.use(
 
     // 204 No Content
     if (response.status === 204 || response.data == null) {
-      return undefined as any;
+      return undefined as unknown as AxiosResponse;
     }
 
     // Если сервер вернул { data: T }
     if (typeof response.data === 'object' && response.data && 'data' in response.data) {
-      const transformedData = snakeToCamel((response.data as ApiResponse<any>).data);
-      return transformedData;
+      const transformedData = snakeToCamel((response.data as ApiResponse<unknown>).data);
+      return transformedData as unknown as AxiosResponse;
     }
 
     // Иначе преобразуем весь payload
-    return snakeToCamel(response.data);
+    return snakeToCamel(response.data) as unknown as AxiosResponse;
   },
   (error: AxiosError) => {
     if (import.meta.env.DEV) {
