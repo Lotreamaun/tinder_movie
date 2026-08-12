@@ -25,14 +25,6 @@ def setup_logging(log_level: str = "INFO", log_file: str = "logs/app.log") -> lo
     
     # Настройка форматирования
     formatter = logging.Formatter(
-        """
-        Формат логирования:
-        %(asctime)s — дата и время
-        %(name)s — имя логгера (tinder_movie)
-        %(levelname)s — уровень логирования (DEBUG, INFO, WARNING, ERROR)
-        %(message)s — сообщение
-        datefmt='%Y-%m- %H:%M:%S' — формат даты и времени (2026-01-11 12:00:00)
-        """
         '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
