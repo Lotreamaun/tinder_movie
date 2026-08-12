@@ -41,6 +41,10 @@ class DeckService:
         параллельные запросы возвращают разные фильмы. Если колода нет —
         создаёт его; если позиция дошла до конца — пополняет колод.
         Возвращает None, если фильм не найден.
+
+        Транзакция закрывается одним финальным commit: он атомарно персистит
+        создание позиции (если оно было), её продвижение и возможное пополнение
+        колоды (design.md, D1/D2).
         """
         room = room_service.get_room_by_code(db, room_code)
         if not room or user.telegram_id not in room.participants:
@@ -96,8 +100,11 @@ class DeckService:
     def _get_or_create_position(self, db: Session, user_id: UUID, room_code: str) -> RoomDeckPosition:
         """Возвращает позицию участника в колоде, создавая её при первом запросе.
 
-        Строка блокируется (SELECT ... FOR UPDATE) на время транзакции, чтобы
-        параллельные запросы одного участника сериализовались.
+        Создание НЕ коммитится отдельно (design.md, D1): вставка строки неявно
+        держит её блокировку до финального commit вызывающего кода, где позиция
+        продвигается. Конкурентный запрос блокируется на этой строке и после
+        rollback читает уже продвинутую позицию — дубликатов при параллельной
+        предзагрузке не возникает.
         """
         position = self._get_position(db, user_id, room_code, lock=True)
         if position:
@@ -106,14 +113,13 @@ class DeckService:
         position = RoomDeckPosition(user_id=user_id, room_code=room_code, position=0)
         db.add(position)
         try:
-            db.commit()
+            db.flush()
         except IntegrityError:
             # Конкурентное создание: другой запрос уже создал строку позиции.
             db.rollback()
             position = self._get_position(db, user_id, room_code, lock=True)
             if position is None:
                 raise
-        db.refresh(position)
         return position
 
     def _next_available(
@@ -159,6 +165,10 @@ class DeckService:
         Исключаются только свайпы текущего участника (как и при scan) — фильмы,
         которые свайпнули другие участники, не блокируют пополнение, иначе
         свайпы из других комнат (подбор по составу участников) выжимают каталог.
+
+        Коммит здесь не выполняется (design.md, D2): транзакционная граница —
+        за внешним `get_next_movie_for_room`, чтобы персист позиции и пополнение
+        колода не разрывались промежуточным commit.
         """
         locked = self._get_deck(db, deck.room_code, lock=True)
         if locked is None:
@@ -171,7 +181,6 @@ class DeckService:
             return
 
         deck.movie_ids = deck.movie_ids + new_ids
-        db.commit()
         logger.info("Replenished deck for room %s with %d movies", deck.room_code, len(new_ids))
 
     def _get_deck(self, db: Session, room_code: str, lock: bool = False) -> Optional[RoomDeck]:

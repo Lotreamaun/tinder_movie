@@ -1,4 +1,5 @@
 """Тесты общего колода фильмов комнаты (change shared-deck)."""
+import threading
 from uuid import UUID
 
 from app.database import SessionLocal
@@ -386,3 +387,44 @@ def test_fallback_random_movie_when_catalog_exhausted(db, make_user, make_movie,
     # Каталог исчерпан: запрос возвращает фильм (повтор), а не None
     movie = deck_service.get_next_movie_for_room(db, u1, room.id)
     assert movie is not None
+
+
+# 6.9 — параллельный первый запрос (позиция ещё не создана) возвращает
+# разные фильмы (гонка create-commit vs advance, change fix-parallel-preload-duplicates)
+def test_parallel_first_requests_return_distinct_movies(db, make_user, make_movie, make_room):
+    u1 = make_user(1117)
+    u2 = make_user(1118)
+    room = make_room(u1, [1117, 1118])
+    for _ in range(10):
+        make_movie()
+
+    n = 5
+    barrier = threading.Barrier(n)
+    results = {}
+    errors = {}
+
+    def worker(idx: int) -> None:
+        try:
+            session = SessionLocal()
+            try:
+                fresh_user = user_service.get_user_by_telegram_id(session, 1117)
+                # Синхронизируем потоки непосредственно перед запросом,
+                # чтобы все вошли в get_next_movie_for_room «почти одновременно».
+                barrier.wait(timeout=15)
+                movie = deck_service.get_next_movie_for_room(session, fresh_user, room.id)
+                results[idx] = str(movie.id) if movie else None
+            finally:
+                session.close()
+        except Exception as e:  # noqa: BLE001
+            errors[idx] = repr(e)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+
+    assert not errors, f"Thread errors: {errors}"
+    movie_ids = [results[i] for i in range(n)]
+    assert all(movie_ids), f"Some requests returned None: {movie_ids}"
+    assert len(set(movie_ids)) == n, f"Duplicates in parallel first requests: {movie_ids}"
