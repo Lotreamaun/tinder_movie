@@ -1,7 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { MovieCard } from './components/MovieCard';
+import { AnimatePresence } from 'framer-motion';
+import { MovieCard, type ExitDirection } from './components/MovieCard';
+import { SkeletonCard } from './components/SkeletonCard';
 import { MatchOverlay } from './components/MatchOverlay';
 import { getRandomMovie, createSwipe, getMyRoom, ApiError } from './services/api';
+import { getTelegramUserId, disableVerticalSwipes } from './utils/telegram';
+import { preloadImage } from './utils/image';
 import './App.css';
 import type { Movie } from './types/movie_types';
 
@@ -15,54 +19,87 @@ function App() {
   // 3. Состояние загрузки
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  // 4. Ошибка
+  // 3b. Догрузка следующего фильма при исчерпании очереди (показывается SkeletonCard)
+  const [isLoadingNext, setIsLoadingNext] = useState<boolean>(false);
+
+  // 4. Неблокирующий баннер ошибки
   const [error, setError] = useState<string | null>(null);
 
-  // 5. Загрузка при свайпе
-  const [isSwipeInProgress, setIsSwipeInProgress] = useState<boolean>(false);
-
-  // 6. Telegram ID
+  // 5. Telegram ID
   const [telegramId, setTelegramId] = useState<number | null>(null);
 
-  // 7. Участники комнаты (для групповых свайпов)
+  // 5b. Готова ли инициализация Telegram WebApp SDK (баннер «Telegram ID not set»
+  //     показываем только после этого, чтобы не мигал во время инициализации).
+  const [sdkInitDone, setSdkInitDone] = useState<boolean>(false);
+
+  // 6. Участники комнаты (для групповых свайпов)
   const [groupParticipants, setGroupParticipants] = useState<number[]>([]);
 
-  // 8. Код текущей комнаты (для общего колода фильмов)
+  // 7. Код текущей комнаты (для общего колода фильмов)
   const [roomCode, setRoomCode] = useState<string | null>(null);
+
+  // 8. Направление последнего свайпа (для exit-анимации вылета карточки)
+  const [exitDirection, setExitDirection] = useState<ExitDirection | null>(null);
 
   // 9. Мэтч — фильм, по которому найден матч
   const [matchedMovie, setMatchedMovie] = useState<Movie | null>(null);
 
-  // Ref-копия очереди — чтобы handleSwipe всегда видел актуальное значение
+  // Ref-копии — чтобы обработчики видели актуальные значения без пересоздания
   const movieQueueRef = useRef<Movie[]>(_movieQueue);
+  const currentMovieRef = useRef<Movie | null>(currentMovie);
+  const telegramIdRef = useRef<number | null>(telegramId);
+  const roomCodeRef = useRef<string | null>(roomCode);
 
-  useEffect(() => {
-    movieQueueRef.current = _movieQueue;
-  }, [_movieQueue]);
+  useEffect(() => { movieQueueRef.current = _movieQueue; }, [_movieQueue]);
+  useEffect(() => { currentMovieRef.current = currentMovie; }, [currentMovie]);
+  useEffect(() => { telegramIdRef.current = telegramId; }, [telegramId]);
+  useEffect(() => { roomCodeRef.current = roomCode; }, [roomCode]);
+
+  // Догрузка следующего фильма (из общего колода комнаты, если она есть) + preload постера.
+  const loadMoreMovies = useCallback(async (): Promise<Movie> => {
+    const movie = await getRandomMovie({
+      roomCode: roomCodeRef.current ?? undefined,
+      telegramId: telegramIdRef.current ?? undefined,
+    });
+    preloadImage(movie.posterUrl);
+    return movie;
+  }, []);
 
   // Загружаем первый фильм и telegramId при монтировании компонента
   useEffect(() => {
     const initializeApp = async () => {
       try {
-        // 1. Пробуем получить реальный telegramId из Telegram WebApp API
-        const tg = window.Telegram?.WebApp;
-        const tgUserId = tg?.initDataUnsafe?.user?.id;
+        // Блокируем вертикальные свайпы (сворачивание mini-app) — без этого
+        // горизонтальные свайпы карточки дёргают всё окно приложения.
+        disableVerticalSwipes();
 
+        // 1. Ждём инициализацию Telegram WebApp SDK (короткий retry/таймаут),
+        //    чтобы не показывать заглушку «Telegram ID not set» раньше времени.
+        const tgUserId = await getTelegramUserId();
+        setSdkInitDone(true);
+
+        let resolvedId: number | null = null;
         if (tgUserId) {
+          resolvedId = tgUserId;
           setTelegramId(tgUserId);
           console.log('Telegram ID from WebApp:', tgUserId);
         } else {
-          // 2. Фоллбэк: localStorage (для тестов в браузере)
+          // Фоллбэк: localStorage (для тестов в браузере)
           const storedTelegramId = localStorage.getItem('telegramId');
           if (storedTelegramId) {
-            setTelegramId(Number(storedTelegramId));
-            console.log('Telegram ID from localStorage:', storedTelegramId);
+            const parsed = Number(storedTelegramId);
+            if (!Number.isNaN(parsed)) {
+              resolvedId = parsed;
+              setTelegramId(parsed);
+              console.log('Telegram ID from localStorage:', storedTelegramId);
+            }
           } else {
-            // 3. Dev fallback: .env (только локальная разработка)
+            // Dev fallback: .env (только локальная разработка)
             const devId = import.meta.env.VITE_DEV_TELEGRAM_ID;
             if (import.meta.env.DEV && devId) {
               const parsed = Number(devId);
               if (!Number.isNaN(parsed)) {
+                resolvedId = parsed;
                 setTelegramId(parsed);
                 console.warn('Using VITE_DEV_TELEGRAM_ID from .env:', parsed);
               }
@@ -70,11 +107,10 @@ function App() {
           }
         }
 
-        // Загружаем комнату пользователя (нужно для групповых свайпов)
-        const currentTgId = tgUserId || (localStorage.getItem('telegramId') ? Number(localStorage.getItem('telegramId')) : null);
+        // 2. Загружаем комнату пользователя (нужно для групповых свайпов)
         let currentRoomCode: string | null = null;
-        if (currentTgId) {
-          const room = await getMyRoom(currentTgId);
+        if (resolvedId) {
+          const room = await getMyRoom(resolvedId);
           if (room && room.participantIds) {
             setGroupParticipants(room.participantIds);
             currentRoomCode = room.roomCode ?? null;
@@ -89,9 +125,9 @@ function App() {
         setError(null);
         setIsLoading(true);
 
-        // Загружаем 5 фильмов заранее (из общего колода комнаты, если она есть)
-        const roomParams = currentRoomCode && currentTgId
-          ? { roomCode: currentRoomCode, telegramId: currentTgId }
+        // 3. Загружаем 5 фильмов заранее (из общего колода комнаты, если она есть)
+        const roomParams = currentRoomCode && resolvedId
+          ? { roomCode: currentRoomCode, telegramId: resolvedId }
           : undefined;
         const movies = await Promise.all([
           getRandomMovie(roomParams),
@@ -101,9 +137,10 @@ function App() {
           getRandomMovie(roomParams),
         ]);
 
-        setMovieQueue(movies);
+        movies.forEach((m) => preloadImage(m.posterUrl));
+
+        setMovieQueue(movies.slice(1));
         setCurrentMovie(movies[0]);
-        setMovieQueue(prev => prev.slice(1)); // Убираем первый фильм из очереди
         if (import.meta.env.DEV) {
           console.log('movie (first fetched):', movies[0]);
         }
@@ -118,111 +155,135 @@ function App() {
     initializeApp();
   }, []);
 
-  // Функция для обработки свайпа — через useCallback чтобы всегда видеть актуальный currentMovie
-  const handleSwipe = useCallback(async (swipeType: 'like' | 'dislike') => {
-    if (!currentMovie || isSwipeInProgress || !telegramId) return;
+  // Обработка свайпа: карточка уходит сразу (оптимистично), отправка — в фоне.
+  const handleSwipe = useCallback((swipeType: 'like' | 'dislike') => {
+    const movie = currentMovieRef.current;
+    if (!movie) return;
 
-    if (groupParticipants.length < 2) {
-      setError('Нужно минимум 2 участника в комнате для свайпов');
-      return;
+    // Направление для exit-анимации вылета
+    setExitDirection(swipeType === 'like' ? 'right' : 'left');
+
+    // Сразу показываем следующий фильм из очереди
+    const queue = movieQueueRef.current;
+    const [next, ...rest] = queue;
+    if (next) {
+      setCurrentMovie(next);
+      setMovieQueue(rest);
+      preloadImage(next.posterUrl);
+      // Дополняем очередь, если осталось мало
+      if (rest.length < 3) {
+        loadMoreMovies()
+          .then((m) => setMovieQueue((q) => [...q, m]))
+          .catch((err) => console.error('Failed to prefetch next movie:', err));
+      }
+    } else {
+      // Очередь пуста: показываем скелетон и догружаем следующий фильм.
+      // Заглушка «Нет доступных фильмов» появится только если догрузка вернула пусто/ошибку.
+      setIsLoadingNext(true);
+      setCurrentMovie(null);
+      loadMoreMovies()
+        .then((m) => setCurrentMovie(m))
+        .catch((err) => {
+          console.error('Failed to load next movie:', err);
+          setError('Не удалось загрузить следующий фильм. Проверьте соединение.');
+        })
+        .finally(() => setIsLoadingNext(false));
     }
 
-    try {
-      setIsSwipeInProgress(true);
-      setError(null);
-
-      const swipeResult = await createSwipe({
-        movieId: currentMovie.id,
+    // Отправка свайпа — в фоне, UI не блокируется
+    const tgId = telegramIdRef.current;
+    if (tgId && groupParticipants.length >= 2) {
+      createSwipe({
+        movieId: movie.id,
         swipeType,
         groupParticipants,
-        telegramId,
-      });
-
-      // Проверяем, найден ли мэтч
-      if (swipeResult?.matchFound) {
-        setMatchedMovie(currentMovie);
-      }
-
-      // Берём следующий фильм из очереди (через ref — всегда актуально)
-      const queue = movieQueueRef.current;
-
-      if (queue.length > 0) {
-        const [next, ...rest] = queue;
-        setCurrentMovie(next);
-        setMovieQueue(rest);
-
-        // Предзагружаем если осталось меньше 3
-        if (rest.length < 3) {
-          getRandomMovie({
-            roomCode: roomCode ?? undefined,
-            telegramId: telegramId ?? undefined,
-          }).then(m => {
-            setMovieQueue(q => [...q, m]);
-          });
-        }
-      } else {
-        // Очередь пуста — загружаем новый
-        const movie = await getRandomMovie({
-          roomCode: roomCode ?? undefined,
-          telegramId: telegramId ?? undefined,
+        telegramId: tgId,
+      })
+        .then((swipeResult) => {
+          // Проверяем, найден ли мэтч
+          if (swipeResult?.matchFound) {
+            setMatchedMovie(movie);
+          }
+        })
+        .catch((err) => {
+          console.error('Failed to create swipe:', err);
+          setError(
+            err instanceof ApiError
+              ? `Не удалось отправить свайп: ${err.message}`
+              : 'Не удалось отправить свайп. Проверьте соединение.'
+          );
         });
-        setCurrentMovie(movie);
-        // Предзагружаем следующий в фоне
-        getRandomMovie({
-          roomCode: roomCode ?? undefined,
-          telegramId: telegramId ?? undefined,
-        }).then(m => {
-          setMovieQueue([m]);
-        });
-      }
-
-    } catch (err) {
-      console.error('Failed to create swipe:', err);
-      setError(err instanceof ApiError ? err.message : 'Failed to create swipe');
-    } finally {
-      setIsSwipeInProgress(false);
+    } else if (tgId) {
+      setError('Нужно минимум 2 участника в комнате для свайпов');
     }
-  }, [currentMovie, isSwipeInProgress, telegramId, groupParticipants, roomCode]);
+  }, [groupParticipants, loadMoreMovies]);
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <div className="container py-4 flex flex-col">
-        {/* Dev/UX Banner when telegramId is missing */}
-        {!telegramId && (
-          <div className="mb-4 rounded-lg border border-yellow-200 bg-yellow-50 p-4 text-yellow-800">
-            <div className="mb-2 font-semibold">Telegram ID not set.</div>
-            <div className="text-sm">
-              Swipes are disabled. Set localStorage key <code>telegramId</code> or use env <code>VITE_DEV_TELEGRAM_ID</code> in dev.
+    <div className="min-h-screen flex-1 flex flex-col bg-background text-foreground">
+      {/* Dev/UX Banner when telegramId is missing — только после инициализации SDK */}
+      {sdkInitDone && !telegramId && (
+        <div className="mb-4 rounded-lg border border-yellow-200 bg-yellow-50 p-4 text-yellow-800">
+          <div className="mb-2 font-semibold">Telegram ID not set.</div>
+          <div className="text-sm">
+            Swipes are disabled. Set localStorage key <code>telegramId</code> or use env <code>VITE_DEV_TELEGRAM_ID</code> in dev.
+          </div>
+          {import.meta.env.DEV && (
+            <div className="mt-3">
+              <DevTelegramIdSetter onSet={(id) => setTelegramId(id)} />
             </div>
-            {import.meta.env.DEV && (
-              <div className="mt-3">
-                <DevTelegramIdSetter onSet={(id) => setTelegramId(id)} />
-              </div>
-            )}
-          </div>
-        )}
+          )}
+        </div>
+      )}
 
-        {error && (
-          <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-red-800">
-            <div className="font-semibold">Error</div>
-            <div className="text-sm">{error}</div>
+      {error && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-red-800">
+          <div className="flex items-center justify-between">
+            <div className="font-semibold">Ошибка</div>
+            <button
+              onClick={() => setError(null)}
+              aria-label="Закрыть сообщение об ошибке"
+              className="text-lg leading-none text-red-400 hover:text-red-700"
+            >
+              ×
+            </button>
           </div>
-        )}
+          <div className="text-sm">{error}</div>
+        </div>
+      )}
 
-        <div className="movie-container flex-1">
+      {/* Свайп-область на весь экран: небольшие отступы по бокам/снизу,
+          сверху — safe-area (dynamic island на iPhone) */}
+      <div className="relative flex-1">
+        <div
+          className="movie-container absolute inset-0 mx-auto max-w-[480px]"
+          style={{
+            paddingLeft: 12,
+            paddingRight: 12,
+            paddingTop: 'calc(max(var(--tg-content-safe-area-inset-top, 0px), env(safe-area-inset-top, 0px)) + 12px)',
+            paddingBottom: 'calc(max(var(--tg-content-safe-area-inset-bottom, 0px), env(safe-area-inset-bottom, 0px)) + 20px)',
+          }}
+        >
           {isLoading ? (
-            <div className="loading">
-              <div className="h-8 w-8 animate-spin rounded-full border-2 border-muted border-t-primary" />
-            </div>
-          ) : currentMovie ? (
-            <MovieCard
-              movie={currentMovie}
-              onSwipe={handleSwipe}
-              disabled={isSwipeInProgress}
-              className="h-full"
-            />
+            <SkeletonCard />
           ) : (
-            <div className="flex h-[60vh] items-center justify-center text-muted-foreground">No movie available</div>
+            <>
+              <AnimatePresence custom={exitDirection}>
+                {currentMovie && (
+                  <MovieCard
+                    key={currentMovie.id}
+                    movie={currentMovie}
+                    onSwipe={handleSwipe}
+                    exitDirection={exitDirection}
+                  />
+                )}
+              </AnimatePresence>
+              {isLoadingNext && <SkeletonCard />}
+              {!currentMovie && !isLoadingNext && (
+                <div className="absolute inset-0 flex items-center justify-center text-muted-foreground">
+                  Нет доступных фильмов
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>

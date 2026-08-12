@@ -20,9 +20,11 @@ interface TelegramWebAppInitData {
 }
 
 interface TelegramWebApp {
+  initData: string;
   initDataUnsafe: TelegramWebAppInitData;
   ready: () => void;
   expand: () => void;
+  disableVerticalSwipes: () => void;
 }
 
 interface Window {

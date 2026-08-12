@@ -119,3 +119,11 @@
 
 /* Smoke test to ensure CSS is loaded */
 body { outline: none; }
+
+/* Перформанс движущейся карточки: transform анимируется framer-motion напрямую
+   (will-change) и изолируется от layout/paint (contain) — 60 FPS во время drag. */
+.movie-card {
+  will-change: transform;
+  contain: layout paint;
+}
+
