@@ -95,7 +95,7 @@ export const MovieCard = ({ movie, onSwipe, exitDirection, style }: MovieCardPro
   return (
     <div className="absolute inset-0" style={style}>
       <motion.div
-        className="movie-card relative h-full w-full rounded-3xl overflow-hidden shadow-2xl bg-card touch-none"
+        className="movie-card relative h-full w-full rounded-3xl overflow-hidden shadow-2xl bg-card"
         variants={cardVariants}
         custom={exitDirection ?? "right"}
         initial="enter"

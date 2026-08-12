@@ -125,5 +125,12 @@ body { outline: none; }
 .movie-card {
   will-change: transform;
   contain: layout paint;
+  /* Карточка реагирует ТОЛЬКО на горизонтальный свайп (drag="x"). framer-motion
+     при drag="x" инлайном выставляет touch-action: pan-y, который перебивает
+     Tailwind-класс touch-none, и вертикальные жесты уходят браузеру/Telegram —
+     окно mini-app «ездит», карточка тянется вверх-вниз. !important возвращает
+     управление жестами приложению: вертикаль не двигает карточку и не сворачивает
+     окно, горизонталь обрабатывается framer-motion. */
+  touch-action: none !important;
 }
 
