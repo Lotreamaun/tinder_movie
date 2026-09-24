@@ -1,13 +1,22 @@
 """Тесты общего колода фильмов комнаты (change shared-deck)."""
 import threading
+import time
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
+from sqlalchemy import select
+
+from app.config import settings
 from app.database import SessionLocal
 from app.models.room_deck import RoomDeck
+from app.models.swipe import UserSwipe
 from app.services import deck_service as deck_service_module
+from app.services import movie_service as movie_service_module
 from app.services.deck_service import deck_service
+from app.services.match_service import match_service
 from app.services.movie_service import movie_service
 from app.services.swipe_service import swipe_service
+from app.services.room_session import get_session_start
 from app.services.user_service import user_service
 
 
@@ -24,6 +33,21 @@ def _swipe(db, user, movie_id: UUID, room) -> None:
         swipe_type="like",
         group_participants=room.participants,
     )
+
+
+def _wait_growth_idle() -> None:
+    """Ждёт завершения фоновой догрузки (снятия guard)."""
+    assert deck_service._growth_lock.acquire(timeout=5), "Фоновая догрузка не завершилась"
+    deck_service._growth_lock.release()
+
+
+def _set_swiped_at(db, user, movie_id: UUID, hours_ago: float) -> None:
+    """Сдвигает время свайпа участника в прошлое."""
+    swipe = db.execute(
+        select(UserSwipe).where(UserSwipe.user_id == user.id, UserSwipe.movie_id == movie_id)
+    ).scalar_one()
+    swipe.swiped_at = datetime.now(timezone.utc) - timedelta(hours=hours_ago)
+    db.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -384,9 +408,164 @@ def test_fallback_random_movie_when_catalog_exhausted(db, make_user, make_movie,
         assert movie is not None
         _swipe(db, u1, movie.id, room)
 
-    # Каталог исчерпан: запрос возвращает фильм (повтор), а не None
+    # Каталог исчерпан, фоновая догрузка (отключена в conftest) новых фильмов
+    # не дала: запрос сразу возвращает фильм (повтор), а не None
     movie = deck_service.get_next_movie_for_room(db, u1, room.id)
     assert movie is not None
+
+
+# ---------------------------------------------------------------------------
+# 8.1 — остаток ниже порога: догрузка стартует в фоне, ответ её не ждёт;
+# догруженный фильм приходит следующим запросам через пополнение колода
+# ---------------------------------------------------------------------------
+def test_background_growth_does_not_block_response(db, make_user, make_movie, make_room, monkeypatch):
+    monkeypatch.delattr(deck_service, "_start_background_growth")
+    monkeypatch.setattr(deck_service_module, "DECK_BATCH_SIZE", 3)
+    u1 = make_user(1201)
+    make_user(1202)
+    room = make_room(u1, [1201, 1202])
+    for _ in range(3):
+        make_movie()
+
+    release = threading.Event()
+    grown_ids: list[str] = []
+
+    def slow_load_batch_movies(session, count=10):
+        # Имитация долгой догрузки из Kinopoisk; второй и последующие вызовы
+        # (новые пересечения порога) ничего не добавляют.
+        release.wait(timeout=5)
+        if grown_ids:
+            return 0
+        movie = movie_service.create_movie(
+            session, kinopoisk_id=900001, title="Grown Movie", year=2024, genre="Drama", poster_url=""
+        )
+        grown_ids.append(str(movie.id))
+        return 1
+
+    monkeypatch.setattr(movie_service, "load_batch_movies", slow_load_batch_movies)
+
+    try:
+        started = time.monotonic()
+        movie = deck_service.get_next_movie_for_room(db, u1, room.id)
+        elapsed = time.monotonic() - started
+        assert movie is not None
+        assert elapsed < 1, f"Ответ ждал фоновую догрузку: {elapsed:.2f}с"
+        assert deck_service._growth_lock.locked(), "Фоновая догрузка должна была стартовать"
+
+        seen = {str(movie.id)}
+        _swipe(db, u1, movie.id, room)
+        for _ in range(2):
+            movie = deck_service.get_next_movie_for_room(db, u1, room.id)
+            seen.add(str(movie.id))
+            _swipe(db, u1, movie.id, room)
+    finally:
+        release.set()
+        _wait_growth_idle()
+
+    # Догрузка завершилась — исчерпавший каталог участник получает новый
+    # фильм через обычное пополнение колода (replenished-from-catalog).
+    movie = deck_service.get_next_movie_for_room(db, u1, room.id)
+    _wait_growth_idle()
+    assert movie is not None
+    assert str(movie.id) == grown_ids[0]
+    assert str(movie.id) not in seen
+
+
+# ---------------------------------------------------------------------------
+# 8.2 — пока догрузка идёт, повторные пересечения порога не запускают вторую
+# ---------------------------------------------------------------------------
+def test_background_growth_guard_prevents_parallel_runs(db, make_user, make_movie, make_room, monkeypatch):
+    monkeypatch.delattr(deck_service, "_start_background_growth")
+    u1 = make_user(1203)
+    u2 = make_user(1204)
+    room = make_room(u1, [1203, 1204])
+    for _ in range(5):
+        make_movie()
+
+    release = threading.Event()
+    calls = {"n": 0}
+
+    def slow_load_batch_movies(session, count=10):
+        calls["n"] += 1
+        release.wait(timeout=5)
+        return 0
+
+    monkeypatch.setattr(movie_service, "load_batch_movies", slow_load_batch_movies)
+
+    try:
+        for user in (u1, u2, u1, u2):
+            assert deck_service.get_next_movie_for_room(db, user, room.id) is not None
+        assert calls["n"] == 1
+    finally:
+        release.set()
+        _wait_growth_idle()
+
+
+# ---------------------------------------------------------------------------
+# 4.2 — fallback без повтора: _random_movie исключает переданные id, пока
+# есть альтернатива, и снимает исключение, если альтернативы не осталось
+# ---------------------------------------------------------------------------
+def test_random_movie_excludes_swiped_when_alternative_exists(db, make_movie):
+    m1 = make_movie()
+    m2 = make_movie()
+    m3 = make_movie()
+
+    result = deck_service._random_movie(db, exclude={m1.id, m2.id})
+    assert result is not None
+    assert result.id == m3.id
+
+
+def test_random_movie_falls_back_to_repeat_when_no_alternative(db, make_movie):
+    m1 = make_movie()
+
+    # Единственный фильм в каталоге тоже в exclude — исключение снимается,
+    # иначе фид оборвался бы вместо допустимого повтора.
+    result = deck_service._random_movie(db, exclude={m1.id})
+    assert result is not None
+    assert result.id == m1.id
+
+
+# ---------------------------------------------------------------------------
+# 4.3 — _grow_catalog работает на отдельной сессии и не требует/не держит
+# FOR UPDATE текущей (внешней) транзакции деки
+# ---------------------------------------------------------------------------
+def test_grow_catalog_does_not_contend_with_deck_lock(make_user, make_room, monkeypatch):
+    u1 = make_user(1206)
+    room = make_room(u1, [1206])
+
+    # Отдельная "внешняя" сессия, имитирующая основную транзакцию
+    # get_next_movie_for_room, которая держит FOR UPDATE на deck комнаты.
+    outer_session = SessionLocal()
+    try:
+        deck = RoomDeck(room_code=room.id, movie_ids=[])
+        outer_session.add(deck)
+        outer_session.commit()
+
+        locked = outer_session.execute(
+            select(RoomDeck).where(RoomDeck.room_code == room.id).with_for_update()
+        ).scalar_one()
+        assert locked is not None
+
+        def fake_load_batch_movies(session, count=10):
+            movie_service.create_movie(
+                session,
+                kinopoisk_id=900002,
+                title="Grown While Locked",
+                year=2024,
+                genre="Drama",
+                poster_url="",
+            )
+            return 1
+
+        monkeypatch.setattr(movie_service, "load_batch_movies", fake_load_batch_movies)
+
+        # _grow_catalog открывает свою SessionLocal() и не трогает room_decks —
+        # вызов не блокируется удержанным FOR UPDATE внешней сессии.
+        grown = deck_service._grow_catalog(u1.id, room.id)
+        assert grown == 1
+    finally:
+        outer_session.rollback()
+        outer_session.close()
 
 
 # 6.9 — параллельный первый запрос (позиция ещё не создана) возвращает
@@ -428,3 +607,295 @@ def test_parallel_first_requests_return_distinct_movies(db, make_user, make_movi
     movie_ids = [results[i] for i in range(n)]
     assert all(movie_ids), f"Some requests returned None: {movie_ids}"
     assert len(set(movie_ids)) == n, f"Duplicates in parallel first requests: {movie_ids}"
+
+
+# ---------------------------------------------------------------------------
+# 8.3 — свайпы старше 24ч без более поздних свайпов группы не исключают фильмы
+# ---------------------------------------------------------------------------
+def test_expired_session_swipes_not_excluded(db, make_user, make_movie, make_room):
+    u1 = make_user(1301)
+    make_user(1302)
+    room = make_room(u1, [1301, 1302])
+    movies = [make_movie() for _ in range(3)]
+    for movie in movies:
+        _swipe(db, u1, movie.id, room)
+
+    assert deck_service._swiped_movie_ids(db, u1, room) == {m.id for m in movies}
+
+    for movie in movies:
+        _set_swiped_at(db, u1, movie.id, hours_ago=25)
+
+    # Сессия истекла: прошлые свайпы не считаются показанными
+    assert get_session_start(db, room.participants) is None
+    assert deck_service._swiped_movie_ids(db, u1, room) == set()
+    assert deck_service._swiped_movie_ids_in_room(db, room) == set()
+
+    # Новый свайп начинает новую сессию, в которую старые не входят
+    _swipe(db, u1, movies[0].id, room)
+    assert deck_service._swiped_movie_ids(db, u1, room) == {movies[0].id}
+
+
+# ---------------------------------------------------------------------------
+# 8.4 — цепочка свайпов с разрывами < 24ч остаётся одной сессией
+# ---------------------------------------------------------------------------
+def test_session_chain_with_short_gaps_continues(db, make_user, make_movie, make_room):
+    u1 = make_user(1303)
+    u2 = make_user(1304)
+    room = make_room(u1, [1303, 1304])
+    movies = [make_movie() for _ in range(5)]
+
+    # Разрыв 40ч (-100ч → -60ч) закрывает старую сессию; дальше разрывы
+    # по 20ч — одна текущая сессия, начавшаяся 60ч назад.
+    plan = [(u1, 100), (u2, 60), (u1, 40), (u2, 20), (u1, 1)]
+    for movie, (user, hours_ago) in zip(movies, plan):
+        _swipe(db, user, movie.id, room)
+        _set_swiped_at(db, user, movie.id, hours_ago=hours_ago)
+
+    session_start = get_session_start(db, room.participants)
+    assert session_start is not None
+    expected = datetime.now(timezone.utc) - timedelta(hours=60)
+    assert abs((session_start - expected).total_seconds()) < 60
+
+    assert deck_service._swiped_movie_ids(db, u1, room) == {movies[2].id, movies[4].id}
+    assert deck_service._swiped_movie_ids_in_room(db, room) == {m.id for m in movies[1:]}
+
+
+# ---------------------------------------------------------------------------
+# 8.5 — матч засчитывает только лайки текущей сессии
+# ---------------------------------------------------------------------------
+def test_check_match_ignores_expired_session_likes(db, make_user, make_movie, make_room):
+    u1 = make_user(1305)
+    u2 = make_user(1306)
+    room = make_room(u1, [1305, 1306])
+    movie = make_movie()
+
+    _swipe(db, u1, movie.id, room)
+    _set_swiped_at(db, u1, movie.id, hours_ago=30)
+
+    # Лайк u2 начинает новую сессию — лайк u1 остался в истёкшей
+    _swipe(db, u2, movie.id, room)
+    assert swipe_service.check_match(db, str(movie.id), room.participants) is False
+
+    # Повторный лайк u1 переносит его в текущую сессию
+    _swipe(db, u1, movie.id, room)
+    assert swipe_service.check_match(db, str(movie.id), room.participants) is True
+
+
+# ---------------------------------------------------------------------------
+# 8.6 — истечение сессии не трогает уже созданные матчи
+# ---------------------------------------------------------------------------
+def test_session_expiry_keeps_existing_matches(db, make_user, make_movie, make_room):
+    u1 = make_user(1307)
+    u2 = make_user(1308)
+    room = make_room(u1, [1307, 1308])
+    movie = make_movie()
+
+    for user in (u1, u2):
+        _swipe(db, user, movie.id, room)
+    assert swipe_service.check_match(db, str(movie.id), room.participants) is True
+    match = match_service.create_match(db, str(movie.id), room.participants)
+
+    for user in (u1, u2):
+        _set_swiped_at(db, user, movie.id, hours_ago=25)
+
+    assert swipe_service.check_match(db, str(movie.id), room.participants) is False
+    assert deck_service.get_next_movie_for_room(db, u1, room.id) is not None
+
+    matches = match_service.list_matches_for_group(db, room.participants)
+    assert [m.id for m in matches] == [match.id]
+    assert str(matches[0].movie_id) == str(movie.id)
+
+
+# ---------------------------------------------------------------------------
+# 10.2 — после истечения сессии старые фильмы возвращаются через рецикл в
+# общий колод: участники получают их в одном порядке, матч достижим
+# ---------------------------------------------------------------------------
+def test_recycle_after_session_expiry_keeps_shared_order(db, make_user, make_movie, make_room, monkeypatch):
+    monkeypatch.setattr(deck_service_module, "DECK_BATCH_SIZE", 3)
+    u1 = make_user(1401)
+    u2 = make_user(1402)
+    room = make_room(u1, [1401, 1402])
+    for _ in range(6):
+        make_movie()
+
+    # Оба участника проходят весь каталог (два пакета колода) и свайпают всё
+    for user in (u1, u2):
+        for _ in range(6):
+            movie = deck_service.get_next_movie_for_room(db, user, room.id)
+            _swipe(db, user, movie.id, room)
+    assert len(_deck_order(db, room.id)) == 6
+
+    for user in (u1, u2):
+        for movie_id in _deck_order(db, room.id):
+            _set_swiped_at(db, user, UUID(movie_id), hours_ago=25)
+
+    m1 = deck_service.get_next_movie_for_room(db, u1, room.id)
+    m2 = deck_service.get_next_movie_for_room(db, u2, room.id)
+    assert m1 is not None and m2 is not None
+    # Рецикл дописал в колод фильмы первого пакета (вне окна перед курсором)
+    order = _deck_order(db, room.id)
+    assert len(order) == 9
+    assert set(order[6:]) == set(order[:3])
+    # Общий порядок: оба участника получили один и тот же фильм — матч достижим
+    assert m1.id == m2.id == UUID(order[6])
+    _swipe(db, u1, m1.id, room)
+    _swipe(db, u2, m2.id, room)
+    assert swipe_service.check_match(db, str(m1.id), room.participants) is True
+
+
+# ---------------------------------------------------------------------------
+# 10.3 — рецикл не возвращает недавно выданные, но ещё не свайпнутые фильмы
+# (очередь предзагрузки фронта)
+# ---------------------------------------------------------------------------
+def test_recycle_skips_recently_served_unswiped(db, make_user, make_movie, make_room, monkeypatch):
+    monkeypatch.setattr(deck_service_module, "DECK_BATCH_SIZE", 3)
+    u1 = make_user(1403)
+    make_user(1404)
+    room = make_room(u1, [1403, 1404])
+    for _ in range(9):
+        make_movie()
+
+    served = [deck_service.get_next_movie_for_room(db, u1, room.id) for _ in range(9)]
+    # 1–3: пропущены без свайпа давно; 4–6: свайпнуты; 7–9: в очереди клиента
+    for movie in served[3:6]:
+        _swipe(db, u1, movie.id, room)
+
+    movie = deck_service.get_next_movie_for_room(db, u1, room.id)
+    order = _deck_order(db, room.id)
+    recycled = set(order[9:])
+    assert recycled == {str(m.id) for m in served[:3]}
+    assert str(movie.id) in recycled
+
+
+# ---------------------------------------------------------------------------
+# 11.5 — известные по kinopoisk_id фильмы страницы топа не запрашивают
+# полные данные (design.md fix-movie-catalog-exhaustion, Decision 7)
+# ---------------------------------------------------------------------------
+class _FakeKinopoiskResponse:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self._payload
+
+
+class _FakeKinopoiskClient:
+    """Заглушка httpx.Client, отдающая фиксированную страницу топа."""
+
+    def __init__(self, films):
+        self._films = films
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def get(self, url, params=None, headers=None):
+        return _FakeKinopoiskResponse({"films": self._films})
+
+
+def test_get_top_movies_skips_known_movies_without_full_data_request(db, make_movie, monkeypatch):
+    monkeypatch.setattr(settings, "KINOPOISK_API_KEY", "test-key")
+    known = make_movie()
+    new_kinopoisk_id = known.kinopoisk_id + 500
+    films = [{"filmId": known.kinopoisk_id}, {"filmId": new_kinopoisk_id}]
+    monkeypatch.setattr(movie_service_module.httpx, "Client", lambda *a, **kw: _FakeKinopoiskClient(films))
+
+    calls: list[int] = []
+
+    def fake_fetch(kinopoisk_id, full_data=False):
+        calls.append(kinopoisk_id)
+        return {
+            "kinopoisk_id": kinopoisk_id,
+            "title": "New Movie",
+            "year": 2024,
+            "genre": "Drama",
+            "poster_url": "",
+        }
+
+    monkeypatch.setattr(movie_service, "fetch_movie_from_kinopoisk", fake_fetch)
+
+    result = movie_service.get_top_movies_from_kinopoisk(db, page=1, limit=10)
+
+    # Известный фильм пропущен без запроса полных данных; новый — запрошен.
+    assert calls == [new_kinopoisk_id]
+    assert [m["kinopoisk_id"] for m in result] == [new_kinopoisk_id]
+
+
+# ---------------------------------------------------------------------------
+# 11.1 (регрессия, найдена ручной проверкой 9.1) — страница, где все фильмы
+# уже известны, не должна выглядеть как конец пагинации: `load_batch_movies`
+# обязан пойти дальше и проверить следующую страницу (design.md, Decision 7:
+# «полный проход по известным страницам стоит ≤13 запросов»).
+# ---------------------------------------------------------------------------
+def test_load_batch_movies_continues_past_fully_known_page(db, monkeypatch):
+    calls: list[int] = []
+
+    def fake_get_top(db_arg, page=1, limit=10):
+        calls.append(page)
+        if page == 1:
+            return []  # страница была, но все фильмы уже в БД
+        if page == 2:
+            return [
+                {
+                    "kinopoisk_id": 555001,
+                    "title": "New Movie",
+                    "year": 2024,
+                    "genre": "Drama",
+                    "poster_url": "",
+                    "description": None,
+                    "rating": None,
+                    "title_original": None,
+                }
+            ]
+        return None  # настоящий конец пагинации
+
+    monkeypatch.setattr(movie_service, "get_top_movies_from_kinopoisk", fake_get_top)
+
+    loaded = movie_service.load_batch_movies(db, count=1)
+
+    assert loaded == 1
+    assert calls == [1, 2]
+    assert movie_service.get_movie_by_kinopoisk_id(db, 555001) is not None
+
+
+# ---------------------------------------------------------------------------
+# 11.6 — пауза после пустой/неудачной догрузки: повтор не раньше истечения
+# паузы и снова возможен после неё (design.md, Decision 8)
+# ---------------------------------------------------------------------------
+def test_growth_cooldown_blocks_retry_until_expiry(db, make_user, make_room, monkeypatch):
+    monkeypatch.delattr(deck_service, "_start_background_growth")
+    u1 = make_user(1501)
+    room = make_room(u1, [1501])
+
+    calls = {"n": 0}
+
+    def empty_load_batch_movies(session, count=10):
+        calls["n"] += 1
+        return 0
+
+    monkeypatch.setattr(movie_service, "load_batch_movies", empty_load_batch_movies)
+
+    deck_service._growth_cooldown_until = None
+    try:
+        swiped: set = set()
+        deck_service._maybe_grow_catalog(db, u1, room, swiped)
+        _wait_growth_idle()
+        assert calls["n"] == 1
+        assert deck_service._growth_cooldown_until is not None
+
+        # В пределах паузы повторное пересечение порога не запускает догрузку.
+        deck_service._maybe_grow_catalog(db, u1, room, swiped)
+        assert calls["n"] == 1
+
+        # После истечения паузы — догрузка снова запускается.
+        deck_service._growth_cooldown_until = datetime.now(timezone.utc) - timedelta(seconds=1)
+        deck_service._maybe_grow_catalog(db, u1, room, swiped)
+        _wait_growth_idle()
+        assert calls["n"] == 2
+    finally:
+        deck_service._growth_cooldown_until = None

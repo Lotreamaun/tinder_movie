@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.models.swipe import SwipeType, UserSwipe
 from app.models.user import User
 from app.config import settings
+from app.services.room_session import get_session_start
 
 class SwipeService:
     @staticmethod
@@ -136,7 +137,13 @@ class SwipeService:
             # Нормализуем группу для корректного сравнения JSON массива
             group_participants = self.normalize_group_participants(group_participants)
 
-            # Получаем все лайки для данного фильма и группы
+            # Засчитываются только лайки текущей сессии комнаты
+            # (design.md fix-movie-catalog-exhaustion, Decision 5)
+            session_start = get_session_start(db, group_participants)
+            if session_start is None:
+                return False
+
+            # Получаем все лайки для данного фильма и группы в текущей сессии
             stmt = (
                 select(UserSwipe, User.telegram_id)
                 .join(User, UserSwipe.user_id == User.id)
@@ -144,7 +151,8 @@ class SwipeService:
                     and_(
                         UserSwipe.movie_id == movie_id,
                         UserSwipe.swipe_type == 'like',
-                        self._group_contains(UserSwipe.group_participants, group_participants)
+                        self._group_contains(UserSwipe.group_participants, group_participants),
+                        UserSwipe.swiped_at >= session_start,
                     )
                 )
             )

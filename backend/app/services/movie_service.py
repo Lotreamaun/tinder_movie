@@ -127,20 +127,25 @@ class MovieService:
         db.delete(movie)
         db.commit()
 
-    def get_top_movies_from_kinopoisk(self, page: int = 1, limit: int = 10) -> List[Dict]:
+    def get_top_movies_from_kinopoisk(self, db: Session, page: int = 1, limit: int = 10) -> Optional[List[Dict]]:
         """
         Получает топ фильмов из Kinopoisk API.
 
         Args:
+            db: Сессия БД (для пропуска уже известных фильмов без запроса полных данных)
             page: Номер страницы (начиная с 1)
             limit: Количество фильмов на страницу (макс 50)
 
         Returns:
-            Список словарей с данными фильмов для создания в БД
+            Список словарей с данными фильмов для создания в БД (может быть
+            пустым, если все фильмы страницы уже есть в БД — это не конец
+            пагинации, design.md Decision 7); None — если страница недоступна
+            (нет ключа, Kinopoisk не вернул фильмов, ошибка запроса) и
+            пагинацию пора останавливать.
         """
         if not settings.KINOPOISK_API_KEY:
             logger.warning("KINOPOISK_API_KEY not set, cannot load movies")
-            return []
+            return None
 
         # Ограничиваем параметры разумными пределами
         page = max(1, min(page, 100))  # Не более 100 страниц
@@ -164,13 +169,20 @@ class MovieService:
                 films = data.get("films", [])
                 if not films:
                     logger.warning(f"No films found in Kinopoisk API response")
-                    return []
+                    return None
 
                 result = []
                 for film in films[:limit]:  # Ограничиваем по limit
                     kinopoisk_id = film.get("filmId") or film.get("kinopoiskId")
                     if not kinopoisk_id:
                         logger.warning(f"Skipping film without ID: {film}")
+                        continue
+
+                    # Фильм уже есть в БД — не тратим запрос квоты на полные данные
+                    # (design.md, Decision 7). Страница при этом не считается
+                    # концом пагинации — дальше могут быть неизвестные фильмы.
+                    if self.get_movie_by_kinopoisk_id(db, kinopoisk_id):
+                        logger.debug(f"Movie {kinopoisk_id} already exists, skipping full data request")
                         continue
 
                     # Получаем полные данные фильма
@@ -185,7 +197,7 @@ class MovieService:
 
         except Exception as e:
             logger.error(f"Failed to fetch top movies from Kinopoisk: {e}", exc_info=True)
-            return []
+            return None
 
     def load_batch_movies(self, db: Session, count: int = 10) -> int:
         """
@@ -206,11 +218,15 @@ class MovieService:
         while loaded_count < count:
             # Получаем топ фильмы (по 20 за раз для эффективности)
             batch_size = min(20, count - loaded_count)
-            movies_data = self.get_top_movies_from_kinopoisk(page=page, limit=batch_size)
+            movies_data = self.get_top_movies_from_kinopoisk(db, page=page, limit=batch_size)
 
-            if not movies_data:
+            if movies_data is None:
                 logger.warning(f"No more movies available from Kinopoisk API (page {page})")
                 break
+
+            # Пустой список — не конец пагинации: страница была, но все её
+            # фильмы уже есть в БД (design.md fix-movie-catalog-exhaustion,
+            # Decision 7). Идём дальше, а не останавливаемся.
 
             # Сохраняем фильмы в БД (только те, которых еще нет)
             for movie_data in movies_data:
@@ -414,6 +430,14 @@ class MovieService:
                 
         except httpx.HTTPStatusError as e:
             status_code = e.response.status_code
+
+            # 402 (квота исчерпана) — ожидаемая ситуация, а не ошибка кода:
+            # одна строка WARNING без traceback и без подробностей ответа
+            # (design.md fix-movie-catalog-exhaustion, Decision 4).
+            if status_code == 402:
+                logger.warning(f"Kinopoisk API quota exceeded (402) while fetching movie {kinopoisk_id}")
+                return None
+
             try:
                 error_text = e.response.text[:500]
                 logger.error(f"Kinopoisk API HTTP error {status_code} for {kinopoisk_id}")
@@ -425,15 +449,13 @@ class MovieService:
                     pass
             except:
                 logger.error(f"Kinopoisk API HTTP error {status_code} for {kinopoisk_id} (could not read response)")
-            
+
             if status_code == 404:
                 logger.warning(f"Movie {kinopoisk_id} not found in Kinopoisk API")
             elif status_code == 400:
                 logger.error(f"Bad Request (400) - check URL format and API key: {url}")
             elif status_code == 401:
                 logger.error(f"Unauthorized (401) - check KINOPOISK_API_KEY")
-            elif status_code == 402:
-                logger.error(f"Payment Required (402) - API key limit exceeded")
             elif status_code == 429:
                 logger.error(f"Too Many Requests (429) - rate limit exceeded")
             else:

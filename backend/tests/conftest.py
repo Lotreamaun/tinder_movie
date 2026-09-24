@@ -67,6 +67,27 @@ def db(schema):
             )
 
 
+@pytest.fixture(autouse=True)
+def no_background_catalog_growth(monkeypatch):
+    """Отключает фоновую догрузку каталога (реальные запросы к Kinopoisk).
+
+    В тестовом каталоге всегда меньше `DECK_CATALOG_LOW_THRESHOLD` фильмов,
+    поэтому иначе каждый запрос запускал бы поток. Тесты догрузки включают её
+    обратно через `monkeypatch.delattr(deck_service, "_start_background_growth")`.
+
+    Также сбрасывает паузу после пустой/неудачной догрузки (design.md
+    fix-movie-catalog-exhaustion, Decision 8): `deck_service` — синглтон
+    процесса, и без сброса пауза, поставленная одним тестом, блокировала бы
+    догрузку в следующем.
+    """
+    from app.services.deck_service import deck_service
+
+    monkeypatch.setattr(deck_service, "_start_background_growth", lambda user_id, room_code: False)
+    deck_service._growth_cooldown_until = None
+    yield
+    deck_service._growth_cooldown_until = None
+
+
 @pytest.fixture()
 def client(db):
     """HTTP-клиент к приложению (работает на той же тестовой БД)."""
