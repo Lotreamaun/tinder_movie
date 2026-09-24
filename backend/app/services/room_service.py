@@ -99,6 +99,15 @@ class RoomService:
         db.commit()
         db.refresh(room)
 
+        # Уведомляем остальных участников о присоединении в фоне; ошибка
+        # уведомления не должна приводить к сбою самого присоединения.
+        try:
+            from app.services.notification_service import notification_service
+            notification_service.send_room_join_notification(room, user, db)
+        except Exception as e:
+            from app.logging_config import logger
+            logger.error("Failed to send room join notification: %s", e, exc_info=True)
+
         return room
 
     def leave_room(self, db: Session, user: User, room_code: str) -> Room:
