@@ -88,6 +88,21 @@ def no_background_catalog_growth(monkeypatch):
     deck_service._growth_cooldown_until = None
 
 
+@pytest.fixture(autouse=True)
+def reset_catalog_growth_cursor():
+    """Сбрасывает курсор прохода по подборкам (design.md fix-catalog-growth-ceiling,
+    Decision 3): `movie_service` — синглтон процесса, без сброса курсор,
+    сдвинутый одним тестом, влиял бы на следующий.
+    """
+    movie_service._collection_index = 0
+    movie_service._next_page = 1
+    movie_service._new_in_pass = 0
+    yield
+    movie_service._collection_index = 0
+    movie_service._next_page = 1
+    movie_service._new_in_pass = 0
+
+
 @pytest.fixture()
 def client(db):
     """HTTP-клиент к приложению (работает на той же тестовой БД)."""

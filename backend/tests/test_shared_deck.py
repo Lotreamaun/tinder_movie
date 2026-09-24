@@ -2,6 +2,7 @@
 import threading
 import time
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 from uuid import UUID
 
 from sqlalchemy import select
@@ -14,7 +15,7 @@ from app.services import deck_service as deck_service_module
 from app.services import movie_service as movie_service_module
 from app.services.deck_service import deck_service
 from app.services.match_service import match_service
-from app.services.movie_service import movie_service
+from app.services.movie_service import movie_service, LoadBatchResult
 from app.services.swipe_service import swipe_service
 from app.services.room_session import get_session_start
 from app.services.user_service import user_service
@@ -454,12 +455,12 @@ def test_background_growth_does_not_block_response(db, make_user, make_movie, ma
         # (новые пересечения порога) ничего не добавляют.
         release.wait(timeout=5)
         if grown_ids:
-            return 0
+            return LoadBatchResult(loaded=0, stop_reason="budget")
         movie = movie_service.create_movie(
             session, kinopoisk_id=900001, title="Grown Movie", year=2024, genre="Drama", poster_url=""
         )
         grown_ids.append(str(movie.id))
-        return 1
+        return LoadBatchResult(loaded=1, stop_reason="count")
 
     monkeypatch.setattr(movie_service, "load_batch_movies", slow_load_batch_movies)
 
@@ -507,7 +508,7 @@ def test_background_growth_guard_prevents_parallel_runs(db, make_user, make_movi
     def slow_load_batch_movies(session, count=10):
         calls["n"] += 1
         release.wait(timeout=5)
-        return 0
+        return LoadBatchResult(loaded=0, stop_reason="budget")
 
     monkeypatch.setattr(movie_service, "load_batch_movies", slow_load_batch_movies)
 
@@ -574,14 +575,14 @@ def test_grow_catalog_does_not_contend_with_deck_lock(make_user, make_room, monk
                 genre="Drama",
                 poster_url="",
             )
-            return 1
+            return LoadBatchResult(loaded=1, stop_reason="count")
 
         monkeypatch.setattr(movie_service, "load_batch_movies", fake_load_batch_movies)
 
         # _grow_catalog открывает свою SessionLocal() и не трогает room_decks —
         # вызов не блокируется удержанным FOR UPDATE внешней сессии.
         grown = deck_service._grow_catalog(u1.id, room.id)
-        assert grown == 1
+        assert grown.loaded == 1
     finally:
         outer_session.rollback()
         outer_session.close()
@@ -787,10 +788,9 @@ def test_recycle_skips_recently_served_unswiped(db, make_user, make_movie, make_
 
 
 # ---------------------------------------------------------------------------
-# 11.5 — известные по kinopoisk_id фильмы страницы топа не запрашивают
-# полные данные (design.md fix-movie-catalog-exhaustion, Decision 7)
+# Заглушка httpx.Client для /films/collections (change fix-catalog-growth-ceiling)
 # ---------------------------------------------------------------------------
-class _FakeKinopoiskResponse:
+class _FakeCollectionsResponse:
     def __init__(self, payload):
         self._payload = payload
 
@@ -801,11 +801,12 @@ class _FakeKinopoiskResponse:
         return self._payload
 
 
-class _FakeKinopoiskClient:
-    """Заглушка httpx.Client, отдающая фиксированную страницу топа."""
+class _FakeCollectionsClient:
+    """Заглушка httpx.Client для `/films/collections`: карта (collection, page) → payload."""
 
-    def __init__(self, films):
-        self._films = films
+    def __init__(self, pages: dict, calls: Optional[list] = None):
+        self._pages = pages
+        self._calls = calls
 
     def __enter__(self):
         return self
@@ -814,90 +815,240 @@ class _FakeKinopoiskClient:
         return False
 
     def get(self, url, params=None, headers=None):
-        return _FakeKinopoiskResponse({"films": self._films})
+        key = (params["type"], params["page"])
+        if self._calls is not None:
+            self._calls.append(key)
+        payload = self._pages.get(key, {"items": [], "totalPages": params["page"]})
+        return _FakeCollectionsResponse(payload)
 
 
-def test_get_top_movies_skips_known_movies_without_full_data_request(db, make_movie, monkeypatch):
+def _collection_item(kinopoisk_id: int, item_type: Optional[str] = "FILM") -> dict:
+    item = {
+        "kinopoiskId": kinopoisk_id,
+        "nameRu": f"Movie {kinopoisk_id}",
+        "year": 2024,
+        "genres": [{"genre": "Drama"}],
+        "posterUrl": "",
+    }
+    if item_type is not None:
+        item["type"] = item_type
+    return item
+
+
+def _patch_collections(monkeypatch, pages: dict, calls: Optional[list] = None) -> None:
     monkeypatch.setattr(settings, "KINOPOISK_API_KEY", "test-key")
+    monkeypatch.setattr(
+        movie_service_module.httpx, "Client", lambda *a, **kw: _FakeCollectionsClient(pages, calls)
+    )
+
+
+# ---------------------------------------------------------------------------
+# _fetch_collection_page — известные по kinopoisk_id и не-FILM элементы
+# отсеиваются на уровне страницы (design.md, Decision 1/4)
+# ---------------------------------------------------------------------------
+def test_fetch_collection_page_skips_known_and_non_film(db, make_movie, monkeypatch):
     known = make_movie()
-    new_kinopoisk_id = known.kinopoisk_id + 500
-    films = [{"filmId": known.kinopoisk_id}, {"filmId": new_kinopoisk_id}]
-    monkeypatch.setattr(movie_service_module.httpx, "Client", lambda *a, **kw: _FakeKinopoiskClient(films))
+    items = [
+        {"kinopoiskId": known.kinopoisk_id, "type": "FILM"},
+        _collection_item(9500, "FILM"),
+        _collection_item(9501, "TV_SERIES"),
+    ]
+    pages = {("TOP_250_MOVIES", 1): {"items": items, "totalPages": 4}}
+    _patch_collections(monkeypatch, pages)
 
-    calls: list[int] = []
+    page = movie_service._fetch_collection_page(db, "TOP_250_MOVIES", 1)
 
-    def fake_fetch(kinopoisk_id, full_data=False):
-        calls.append(kinopoisk_id)
-        return {
-            "kinopoisk_id": kinopoisk_id,
-            "title": "New Movie",
-            "year": 2024,
-            "genre": "Drama",
-            "poster_url": "",
-        }
-
-    monkeypatch.setattr(movie_service, "fetch_movie_from_kinopoisk", fake_fetch)
-
-    result = movie_service.get_top_movies_from_kinopoisk(db, page=1, limit=10)
-
-    # Известный фильм пропущен без запроса полных данных; новый — запрошен.
-    assert calls == [new_kinopoisk_id]
-    assert [m["kinopoisk_id"] for m in result] == [new_kinopoisk_id]
+    assert page is not None
+    assert [m["kinopoisk_id"] for m in page.items] == [9500]
+    assert page.total_pages == 4
+    assert page.raw_count == 3
 
 
 # ---------------------------------------------------------------------------
-# 11.1 (регрессия, найдена ручной проверкой 9.1) — страница, где все фильмы
-# уже известны, не должна выглядеть как конец пагинации: `load_batch_movies`
-# обязан пойти дальше и проверить следующую страницу (design.md, Decision 7:
-# «полный проход по известным страницам стоит ≤13 запросов»).
+# 5.2 — подборка длиннее 10 страниц: жёсткого потолка в 10 страниц нет,
+# новые фильмы со страниц за пределами старого лимита загружаются
 # ---------------------------------------------------------------------------
-def test_load_batch_movies_continues_past_fully_known_page(db, monkeypatch):
-    calls: list[int] = []
+def test_load_batch_movies_goes_past_old_ten_page_limit(db, monkeypatch):
+    monkeypatch.setattr(settings, "KINOPOISK_COLLECTIONS", ["TOP_250_MOVIES"])
+    monkeypatch.setattr(settings, "CATALOG_GROWTH_MAX_PAGES", 15)
 
-    def fake_get_top(db_arg, page=1, limit=10):
-        calls.append(page)
-        if page == 1:
-            return []  # страница была, но все фильмы уже в БД
-        if page == 2:
-            return [
-                {
-                    "kinopoisk_id": 555001,
-                    "title": "New Movie",
-                    "year": 2024,
-                    "genre": "Drama",
-                    "poster_url": "",
-                    "description": None,
-                    "rating": None,
-                    "title_original": None,
-                }
-            ]
-        return None  # настоящий конец пагинации
+    known_ids = [2000 + i for i in range(10)]
+    for kid in known_ids:
+        movie_service.create_movie(db, kinopoisk_id=kid, title=f"Known {kid}", year=2020, genre="Drama", poster_url="")
 
-    monkeypatch.setattr(movie_service, "get_top_movies_from_kinopoisk", fake_get_top)
+    pages = {}
+    for i, kid in enumerate(known_ids, start=1):
+        pages[("TOP_250_MOVIES", i)] = {"items": [{"kinopoiskId": kid, "type": "FILM"}], "totalPages": 13}
+    for page, kid in zip([11, 12, 13], [9001, 9002, 9003]):
+        pages[("TOP_250_MOVIES", page)] = {"items": [_collection_item(kid)], "totalPages": 13}
+    _patch_collections(monkeypatch, pages)
 
-    loaded = movie_service.load_batch_movies(db, count=1)
+    result = movie_service.load_batch_movies(db, count=10)
 
-    assert loaded == 1
-    assert calls == [1, 2]
-    assert movie_service.get_movie_by_kinopoisk_id(db, 555001) is not None
+    assert result.loaded == 3
+    assert result.stop_reason == "pass_end"
+    assert result.new_in_pass == 3
+    for kid in (9001, 9002, 9003):
+        assert movie_service.get_movie_by_kinopoisk_id(db, kid) is not None
 
 
 # ---------------------------------------------------------------------------
-# 11.6 — пауза после пустой/неудачной догрузки: повтор не раньше истечения
-# паузы и снова возможен после неё (design.md, Decision 8)
+# 5.3 — подборка исчерпана раньше последней в списке: догрузка переходит к
+# следующей подборке в той же попытке
 # ---------------------------------------------------------------------------
-def test_growth_cooldown_blocks_retry_until_expiry(db, make_user, make_room, monkeypatch):
+def test_load_batch_movies_moves_to_next_collection_in_same_attempt(db, monkeypatch):
+    monkeypatch.setattr(settings, "KINOPOISK_COLLECTIONS", ["COLLECTION_A", "COLLECTION_B"])
+    monkeypatch.setattr(settings, "CATALOG_GROWTH_MAX_PAGES", 15)
+    pages = {
+        ("COLLECTION_A", 1): {"items": [_collection_item(9100)], "totalPages": 1},
+        ("COLLECTION_B", 1): {"items": [_collection_item(9101)], "totalPages": 1},
+    }
+    _patch_collections(monkeypatch, pages)
+
+    result = movie_service.load_batch_movies(db, count=10)
+
+    assert result.loaded == 2
+    assert result.stop_reason == "pass_end"
+    assert movie_service.get_movie_by_kinopoisk_id(db, 9100) is not None
+    assert movie_service.get_movie_by_kinopoisk_id(db, 9101) is not None
+
+
+# ---------------------------------------------------------------------------
+# 5.4 — бюджет страниц исчерпан: следующая попытка продолжает со страницы,
+# следующей за последней просмотренной, а не с начала
+# ---------------------------------------------------------------------------
+def test_load_batch_movies_resumes_after_budget_exhausted(db, monkeypatch):
+    monkeypatch.setattr(settings, "KINOPOISK_COLLECTIONS", ["TOP_250_MOVIES"])
+    monkeypatch.setattr(settings, "CATALOG_GROWTH_MAX_PAGES", 2)
+    pages = {
+        ("TOP_250_MOVIES", p): {"items": [_collection_item(9200 + p)], "totalPages": 5} for p in range(1, 6)
+    }
+    calls: list = []
+    _patch_collections(monkeypatch, pages, calls)
+
+    result1 = movie_service.load_batch_movies(db, count=10)
+    assert result1.stop_reason == "budget"
+    assert result1.loaded == 2
+    assert calls == [("TOP_250_MOVIES", 1), ("TOP_250_MOVIES", 2)]
+
+    result2 = movie_service.load_batch_movies(db, count=10)
+    assert calls[2:] == [("TOP_250_MOVIES", 3), ("TOP_250_MOVIES", 4)]
+    assert result2.stop_reason == "budget"
+    assert result2.loaded == 2
+
+
+# ---------------------------------------------------------------------------
+# 5.5 — конец полного прохода: попытка останавливается на последней странице
+# последней подборки, не начиная новый проход; следующий проход начинает с
+# первой страницы первой подборки
+# ---------------------------------------------------------------------------
+def test_load_batch_movies_stops_at_pass_end_and_next_pass_restarts(db, monkeypatch):
+    monkeypatch.setattr(settings, "KINOPOISK_COLLECTIONS", ["TOP_250_MOVIES"])
+    monkeypatch.setattr(settings, "CATALOG_GROWTH_MAX_PAGES", 15)
+    pages = {("TOP_250_MOVIES", 1): {"items": [_collection_item(9300)], "totalPages": 1}}
+    calls: list = []
+    _patch_collections(monkeypatch, pages, calls)
+
+    result = movie_service.load_batch_movies(db, count=100)
+
+    assert result.stop_reason == "pass_end"
+    assert result.loaded == 1
+    assert result.new_in_pass == 1
+    assert calls == [("TOP_250_MOVIES", 1)]
+    assert movie_service._collection_index == 0
+    assert movie_service._next_page == 1
+
+    calls.clear()
+    movie_service.load_batch_movies(db, count=100)
+    assert calls == [("TOP_250_MOVIES", 1)]
+
+
+# ---------------------------------------------------------------------------
+# 5.6 — new_in_pass суммируется по нескольким попыткам одного прохода и
+# обнуляется на конце прохода
+# ---------------------------------------------------------------------------
+def test_new_in_pass_accumulates_and_resets_at_pass_end(db, monkeypatch):
+    monkeypatch.setattr(settings, "KINOPOISK_COLLECTIONS", ["TOP_250_MOVIES"])
+    monkeypatch.setattr(settings, "CATALOG_GROWTH_MAX_PAGES", 1)
+    pages = {
+        ("TOP_250_MOVIES", p): {"items": [_collection_item(9400 + p)], "totalPages": 3} for p in range(1, 4)
+    }
+    _patch_collections(monkeypatch, pages)
+
+    r1 = movie_service.load_batch_movies(db, count=10)
+    assert r1.stop_reason == "budget"
+    assert movie_service._new_in_pass == 1
+
+    r2 = movie_service.load_batch_movies(db, count=10)
+    assert r2.stop_reason == "budget"
+    assert movie_service._new_in_pass == 2
+
+    r3 = movie_service.load_batch_movies(db, count=10)
+    assert r3.stop_reason == "pass_end"
+    assert r3.new_in_pass == 3
+    assert movie_service._new_in_pass == 0
+
+
+# ---------------------------------------------------------------------------
+# 5.7 — сериалы (type != FILM) не попадают в каталог; для новых фильмов из
+# подборки не делается отдельный запрос полных данных (design.md, Decision 1)
+# ---------------------------------------------------------------------------
+def test_load_batch_movies_filters_non_film_without_extra_full_data_request(db, monkeypatch):
+    monkeypatch.setattr(settings, "KINOPOISK_COLLECTIONS", ["TOP_250_MOVIES"])
+    items = [
+        _collection_item(9500, "FILM"),
+        _collection_item(9501, "TV_SERIES"),
+        _collection_item(9502, item_type=None),  # нет type — принимается (совместимость)
+    ]
+    pages = {("TOP_250_MOVIES", 1): {"items": items, "totalPages": 1}}
+    _patch_collections(monkeypatch, pages)
+
+    full_data_calls: list = []
+    monkeypatch.setattr(
+        movie_service,
+        "fetch_movie_from_kinopoisk",
+        lambda *a, **kw: full_data_calls.append(a) or None,
+    )
+
+    result = movie_service.load_batch_movies(db, count=10)
+
+    assert result.loaded == 2
+    assert full_data_calls == []
+    assert movie_service.get_movie_by_kinopoisk_id(db, 9500) is not None
+    assert movie_service.get_movie_by_kinopoisk_id(db, 9501) is None
+    assert movie_service.get_movie_by_kinopoisk_id(db, 9502) is not None
+
+
+# ---------------------------------------------------------------------------
+# 5.8 — пауза догрузки зависит от причины остановки попытки (design.md, Decision 6)
+# ---------------------------------------------------------------------------
+def test_growth_pause_budget_without_new_movies_sets_no_cooldown(db, make_user, make_room, monkeypatch):
     monkeypatch.delattr(deck_service, "_start_background_growth")
     u1 = make_user(1501)
     room = make_room(u1, [1501])
 
+    monkeypatch.setattr(
+        movie_service, "load_batch_movies", lambda session, count=10: LoadBatchResult(loaded=0, stop_reason="budget")
+    )
+
+    deck_service._growth_cooldown_until = None
+    deck_service._maybe_grow_catalog(db, u1, room, set())
+    _wait_growth_idle()
+    assert deck_service._growth_cooldown_until is None
+
+
+def test_growth_pause_error_is_short_and_blocks_retry_until_expiry(db, make_user, make_room, monkeypatch):
+    monkeypatch.delattr(deck_service, "_start_background_growth")
+    u1 = make_user(1502)
+    room = make_room(u1, [1502])
+
     calls = {"n": 0}
 
-    def empty_load_batch_movies(session, count=10):
+    def failing_load_batch_movies(session, count=10):
         calls["n"] += 1
-        return 0
+        return LoadBatchResult(loaded=0, stop_reason="error")
 
-    monkeypatch.setattr(movie_service, "load_batch_movies", empty_load_batch_movies)
+    monkeypatch.setattr(movie_service, "load_batch_movies", failing_load_batch_movies)
 
     deck_service._growth_cooldown_until = None
     try:
@@ -906,6 +1057,8 @@ def test_growth_cooldown_blocks_retry_until_expiry(db, make_user, make_room, mon
         _wait_growth_idle()
         assert calls["n"] == 1
         assert deck_service._growth_cooldown_until is not None
+        expected = datetime.now(timezone.utc) + timedelta(minutes=settings.CATALOG_GROWTH_COOLDOWN_MINUTES)
+        assert abs((deck_service._growth_cooldown_until - expected).total_seconds()) < 5
 
         # В пределах паузы повторное пересечение порога не запускает догрузку.
         deck_service._maybe_grow_catalog(db, u1, room, swiped)
@@ -918,3 +1071,49 @@ def test_growth_cooldown_blocks_retry_until_expiry(db, make_user, make_room, mon
         assert calls["n"] == 2
     finally:
         deck_service._growth_cooldown_until = None
+
+
+def test_growth_pause_sources_exhausted_is_long_and_blocks_retry(db, make_user, make_room, monkeypatch):
+    monkeypatch.delattr(deck_service, "_start_background_growth")
+    u1 = make_user(1503)
+    room = make_room(u1, [1503])
+
+    calls = {"n": 0}
+
+    def empty_pass_end(session, count=10):
+        calls["n"] += 1
+        return LoadBatchResult(loaded=0, stop_reason="pass_end", new_in_pass=0)
+
+    monkeypatch.setattr(movie_service, "load_batch_movies", empty_pass_end)
+
+    deck_service._growth_cooldown_until = None
+    try:
+        deck_service._maybe_grow_catalog(db, u1, room, set())
+        _wait_growth_idle()
+        assert calls["n"] == 1
+        assert deck_service._growth_cooldown_until is not None
+        expected = datetime.now(timezone.utc) + timedelta(hours=settings.CATALOG_SOURCES_EXHAUSTED_COOLDOWN_HOURS)
+        assert abs((deck_service._growth_cooldown_until - expected).total_seconds()) < 5
+
+        # Длинная пауза активна — новая попытка не стартует.
+        deck_service._maybe_grow_catalog(db, u1, room, set())
+        assert calls["n"] == 1
+    finally:
+        deck_service._growth_cooldown_until = None
+
+
+def test_growth_pause_pass_end_with_new_movies_sets_no_cooldown(db, make_user, make_room, monkeypatch):
+    monkeypatch.delattr(deck_service, "_start_background_growth")
+    u1 = make_user(1504)
+    room = make_room(u1, [1504])
+
+    monkeypatch.setattr(
+        movie_service,
+        "load_batch_movies",
+        lambda session, count=10: LoadBatchResult(loaded=1, stop_reason="pass_end", new_in_pass=1),
+    )
+
+    deck_service._growth_cooldown_until = None
+    deck_service._maybe_grow_catalog(db, u1, room, set())
+    _wait_growth_idle()
+    assert deck_service._growth_cooldown_until is None

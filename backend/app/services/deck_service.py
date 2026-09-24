@@ -260,29 +260,44 @@ class DeckService:
         return True
 
     def _run_background_growth(self, user_id: UUID, room_code: str) -> None:
-        """Тело фонового потока: догрузка с гарантированным снятием guard."""
+        """Тело фонового потока: догрузка с гарантированным снятием guard.
+
+        Пауза перед следующей попыткой выбирается по причине остановки
+        попытки (design.md, Decision 6): ошибка источника — короткая пауза;
+        конец полного прохода без единого нового фильма (подборки
+        исчерпаны) — длинная; во всех остальных случаях (бюджет страниц,
+        набран `count`, конец прохода с новыми фильмами) — паузы нет, проход
+        не закончен или только что подтвердил, что подборки не исчерпаны.
+        """
         try:
-            loaded = self._grow_catalog(user_id, room_code)
-            if loaded == 0:
-                self._set_growth_cooldown(room_code)
+            result = self._grow_catalog(user_id, room_code)
+            if result.stop_reason == "error":
+                self._set_growth_cooldown(
+                    timedelta(minutes=settings.CATALOG_GROWTH_COOLDOWN_MINUTES), "error"
+                )
+            elif result.stop_reason == "pass_end" and not result.new_in_pass:
+                self._set_growth_cooldown(
+                    timedelta(hours=settings.CATALOG_SOURCES_EXHAUSTED_COOLDOWN_HOURS),
+                    "sources_exhausted",
+                )
         except Exception as e:
             logger.error("Background catalog growth failed room=%s: %s", room_code, e, exc_info=True)
-            self._set_growth_cooldown(room_code)
+            self._set_growth_cooldown(
+                timedelta(minutes=settings.CATALOG_GROWTH_COOLDOWN_MINUTES), "error"
+            )
         finally:
             self._growth_lock.release()
 
-    def _set_growth_cooldown(self, room_code: str) -> None:
-        """Ставит паузу перед следующей попыткой догрузки (design.md, Decision 8)."""
-        self._growth_cooldown_until = datetime.now(timezone.utc) + timedelta(
-            minutes=settings.CATALOG_GROWTH_COOLDOWN_MINUTES
-        )
+    def _set_growth_cooldown(self, duration: timedelta, reason: str) -> None:
+        """Ставит паузу перед следующей попыткой догрузки (design.md, Decision 6)."""
+        self._growth_cooldown_until = datetime.now(timezone.utc) + duration
         logger.info(
-            "Catalog growth cooldown started room=%s until=%s",
-            room_code,
+            "Catalog growth cooldown started reason=%s until=%s",
+            reason,
             self._growth_cooldown_until.isoformat(),
         )
 
-    def _grow_catalog(self, user_id: UUID, room_code: str) -> int:
+    def _grow_catalog(self, user_id: UUID, room_code: str) -> "LoadBatchResult":
         """Догружает новые фильмы в общий каталог из Kinopoisk.
 
         Выполняется на ОТДЕЛЬНОЙ сессии (не сессии запроса), потому что
@@ -298,9 +313,15 @@ class DeckService:
 
         session = SessionLocal()
         try:
-            loaded = movie_service.load_batch_movies(session, count=settings.MOVIES_LOAD_BATCH)
-            logger.info("Grew catalog by %d movies (room=%s user=%s)", loaded, room_code, user_id)
-            return loaded
+            result = movie_service.load_batch_movies(session, count=settings.MOVIES_LOAD_BATCH)
+            logger.info(
+                "Grew catalog by %d movies (room=%s user=%s stop_reason=%s)",
+                result.loaded,
+                room_code,
+                user_id,
+                result.stop_reason,
+            )
+            return result
         finally:
             session.close()
 

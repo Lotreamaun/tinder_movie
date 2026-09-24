@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import Optional, Sequence, Dict, List
 
 import httpx
@@ -11,7 +12,35 @@ from app.config import settings
 from app.logging_config import logger
 from app.services.deck_service import deck_service
 
+
+@dataclass
+class LoadBatchResult:
+    """Результат одной попытки догрузки каталога (design.md, Decision 6)."""
+
+    loaded: int
+    stop_reason: str  # "count" | "budget" | "pass_end" | "error"
+    new_in_pass: Optional[int] = None  # заполнено только для "pass_end"
+
+
+@dataclass
+class _CollectionPage:
+    """Одна страница подборки Kinopoisk после маппинга и отсева."""
+
+    items: List[Dict]  # новые фильмы страницы (известные и не-FILM отсеяны)
+    total_pages: int
+    raw_count: int  # число элементов до отсева — для определения конца подборки
+
+
 class MovieService:
+    def __init__(self) -> None:
+        # Курсор прохода по настроенным подборкам Kinopoisk (design.md,
+        # Decision 3). Доступ сериализован _growth_lock в deck_service:
+        # догрузка идёт не более чем в одном фоновом потоке на процесс,
+        # отдельная синхронизация курсора не нужна.
+        self._collection_index = 0
+        self._next_page = 1
+        self._new_in_pass = 0
+
     def create_movie(
         self,
         db: Session,
@@ -76,8 +105,8 @@ class MovieService:
             load_count = min(needed, settings.MOVIES_LOAD_BATCH)
 
             logger.info(f"Only {total_movies} movies in DB (threshold: {settings.MOVIES_LOAD_THRESHOLD}), loading {load_count} more...")
-            loaded = self.load_batch_movies(db, count=load_count)
-            if loaded == 0 and total_movies == 0:
+            result = self.load_batch_movies(db, count=load_count)
+            if result.loaded == 0 and total_movies == 0:
                 logger.error("No movies in DB and failed to load new ones")
                 return None
 
@@ -127,125 +156,129 @@ class MovieService:
         db.delete(movie)
         db.commit()
 
-    def get_top_movies_from_kinopoisk(self, db: Session, page: int = 1, limit: int = 10) -> Optional[List[Dict]]:
-        """
-        Получает топ фильмов из Kinopoisk API.
+    def _fetch_collection_page(self, db: Session, collection: str, page: int) -> Optional[_CollectionPage]:
+        """Загружает одну страницу подборки Kinopoisk `/films/collections`.
 
-        Args:
-            db: Сессия БД (для пропуска уже известных фильмов без запроса полных данных)
-            page: Номер страницы (начиная с 1)
-            limit: Количество фильмов на страницу (макс 50)
+        Каждый элемент уже содержит все поля, нужные для создания фильма
+        (design.md, Decision 1) — отдельный запрос полных данных не нужен.
 
         Returns:
-            Список словарей с данными фильмов для создания в БД (может быть
-            пустым, если все фильмы страницы уже есть в БД — это не конец
-            пагинации, design.md Decision 7); None — если страница недоступна
-            (нет ключа, Kinopoisk не вернул фильмов, ошибка запроса) и
-            пагинацию пора останавливать.
+            `_CollectionPage` с уже отфильтрованными новыми фильмами
+            (известные по `kinopoisk_id` и не-`FILM` отброшены) и метаданными
+            для определения конца подборки; None при ошибке запроса или
+            исчерпании квоты (402) — пагинацию в этом случае останавливают.
         """
         if not settings.KINOPOISK_API_KEY:
             logger.warning("KINOPOISK_API_KEY not set, cannot load movies")
             return None
 
-        # Ограничиваем параметры разумными пределами
-        page = max(1, min(page, 100))  # Не более 100 страниц
-        limit = max(1, min(limit, 50))  # Не более 50 фильмов за раз
-
-        url = f"{settings.KINOPOISK_BASE_URL}/films/top"
-        params = {
-            "type": "TOP_250_BEST_FILMS",  # Топ 250 лучших фильмов
-            "page": page
-        }
+        url = f"{settings.KINOPOISK_BASE_URL}/films/collections"
+        params = {"type": collection, "page": page}
         headers = {"X-API-KEY": settings.KINOPOISK_API_KEY}
-
-        logger.info(f"Fetching top movies from Kinopoisk API: page {page}, limit {limit}")
 
         try:
             with httpx.Client(timeout=15.0) as client:
                 response = client.get(url, params=params, headers=headers)
                 response.raise_for_status()
                 data = response.json()
-
-                films = data.get("films", [])
-                if not films:
-                    logger.warning(f"No films found in Kinopoisk API response")
-                    return None
-
-                result = []
-                for film in films[:limit]:  # Ограничиваем по limit
-                    kinopoisk_id = film.get("filmId") or film.get("kinopoiskId")
-                    if not kinopoisk_id:
-                        logger.warning(f"Skipping film without ID: {film}")
-                        continue
-
-                    # Фильм уже есть в БД — не тратим запрос квоты на полные данные
-                    # (design.md, Decision 7). Страница при этом не считается
-                    # концом пагинации — дальше могут быть неизвестные фильмы.
-                    if self.get_movie_by_kinopoisk_id(db, kinopoisk_id):
-                        logger.debug(f"Movie {kinopoisk_id} already exists, skipping full data request")
-                        continue
-
-                    # Получаем полные данные фильма
-                    movie_data = self.fetch_movie_from_kinopoisk(kinopoisk_id, full_data=True)
-                    if movie_data:
-                        result.append(movie_data)
-                    else:
-                        logger.warning(f"Could not fetch full data for movie {kinopoisk_id}")
-
-                logger.info(f"Successfully loaded {len(result)} movies from Kinopoisk")
-                return result
-
+        except httpx.HTTPStatusError as e:
+            status_code = e.response.status_code
+            # 402 (квота исчерпана) — ожидаемая ситуация, а не ошибка кода:
+            # одна строка WARNING без traceback (design.md fix-movie-catalog-exhaustion, Decision 4).
+            if status_code == 402:
+                logger.warning(
+                    f"Kinopoisk API quota exceeded (402) while fetching collection={collection} page={page}"
+                )
+            else:
+                logger.error(
+                    f"Kinopoisk API HTTP error {status_code} for collection={collection} page={page}",
+                    exc_info=True,
+                )
+            return None
         except Exception as e:
-            logger.error(f"Failed to fetch top movies from Kinopoisk: {e}", exc_info=True)
+            logger.error(
+                f"Failed to fetch collection={collection} page={page} from Kinopoisk: {e}", exc_info=True
+            )
             return None
 
-    def load_batch_movies(self, db: Session, count: int = 10) -> int:
+        raw_items = data.get("items", [])
+        total_pages = data.get("totalPages")
+        if not isinstance(total_pages, int) or total_pages < 1:
+            # Нет totalPages в ответе — конец подборки определяем по пустому
+            # items на следующей странице (design.md, Decision 2).
+            total_pages = page + 1 if raw_items else page
+
+        items = []
+        for item in raw_items:
+            item_type = item.get("type")
+            # Элементы без type принимаются для совместимости со старым
+            # форматом ответа (design.md, Decision 4); явные не-FILM отсеиваются.
+            if item_type is not None and item_type != "FILM":
+                continue
+
+            kinopoisk_id = item.get("kinopoiskId") or item.get("filmId")
+            if not kinopoisk_id:
+                continue
+
+            # Фильм уже есть в БД — не тратим место в пачке на него.
+            if self.get_movie_by_kinopoisk_id(db, kinopoisk_id):
+                continue
+
+            movie_data = self._map_kinopoisk_movie_data(item, kinopoisk_id)
+            if movie_data:
+                items.append(movie_data)
+
+        return _CollectionPage(items=items, total_pages=total_pages, raw_count=len(raw_items))
+
+    def load_batch_movies(self, db: Session, count: int = 10) -> LoadBatchResult:
         """
-        Загружает пачку фильмов из Kinopoisk API и сохраняет в БД.
+        Догружает пачку новых фильмов из настроенных подборок Kinopoisk.
+
+        Проход по подборкам продолжается с курсора, где остановилась
+        предыдущая попытка (design.md, Decision 3), а не с первой страницы
+        первой подборки. Попытка останавливается по первому из условий:
+        набрано `count` новых фильмов, исчерпан бюджет страниц попытки
+        (`CATALOG_GROWTH_MAX_PAGES`), дошли до конца полного прохода всех
+        подборок (`pass_end`), либо источник вернул ошибку (курсор в этом
+        случае не сдвигается за проблемную страницу).
 
         Args:
             db: Сессия БД
-            count: Количество фильмов для загрузки
+            count: Сколько новых фильмов набрать за попытку
 
         Returns:
-            Количество успешно загруженных фильмов
+            `LoadBatchResult` с числом загруженных фильмов и причиной остановки.
         """
-        logger.info(f"Loading {count} movies from Kinopoisk API")
+        collections = settings.KINOPOISK_COLLECTIONS
+        if not collections:
+            logger.error("KINOPOISK_COLLECTIONS is empty, cannot load movies")
+            return LoadBatchResult(loaded=0, stop_reason="error")
 
         loaded_count = 0
-        page = 1
+        pages_fetched = 0
 
-        while loaded_count < count:
-            # Получаем топ фильмы (по 20 за раз для эффективности)
-            batch_size = min(20, count - loaded_count)
-            movies_data = self.get_top_movies_from_kinopoisk(db, page=page, limit=batch_size)
+        while True:
+            if loaded_count >= count:
+                return LoadBatchResult(loaded=loaded_count, stop_reason="count")
+            if pages_fetched >= settings.CATALOG_GROWTH_MAX_PAGES:
+                return LoadBatchResult(loaded=loaded_count, stop_reason="budget")
 
-            if movies_data is None:
-                logger.warning(f"No more movies available from Kinopoisk API (page {page})")
-                break
+            collection = collections[self._collection_index]
+            page = self._next_page
+            page_result = self._fetch_collection_page(db, collection, page)
+            pages_fetched += 1
 
-            # Пустой список — не конец пагинации: страница была, но все её
-            # фильмы уже есть в БД (design.md fix-movie-catalog-exhaustion,
-            # Decision 7). Идём дальше, а не останавливаемся.
+            if page_result is None:
+                return LoadBatchResult(loaded=loaded_count, stop_reason="error")
 
-            # Сохраняем фильмы в БД (только те, которых еще нет)
-            for movie_data in movies_data:
+            new_on_page = 0
+            for movie_data in page_result.items:
                 if loaded_count >= count:
                     break
-
-                kinopoisk_id = movie_data["kinopoisk_id"]
-
-                # Проверяем, есть ли уже такой фильм
-                existing = self.get_movie_by_kinopoisk_id(db, kinopoisk_id)
-                if existing:
-                    logger.debug(f"Movie {kinopoisk_id} already exists, skipping")
-                    continue
-
                 try:
-                    # Создаем фильм в БД
                     movie = self.create_movie(
                         db=db,
-                        kinopoisk_id=kinopoisk_id,
+                        kinopoisk_id=movie_data["kinopoisk_id"],
                         title=movie_data["title"],
                         year=movie_data["year"],
                         genre=movie_data["genre"],
@@ -255,21 +288,36 @@ class MovieService:
                         rating=movie_data.get("rating"),
                     )
                     loaded_count += 1
+                    new_on_page += 1
                     logger.debug(f"Loaded movie: {movie.title} (ID: {movie.id})")
-
                 except Exception as e:
-                    logger.error(f"Failed to create movie {kinopoisk_id}: {e}")
+                    logger.error(f"Failed to create movie {movie_data.get('kinopoisk_id')}: {e}")
                     continue
 
-            page += 1
+            self._new_in_pass += new_on_page
+            logger.info(
+                "Catalog growth page collection=%s page=%s/%s new=%s",
+                collection,
+                page,
+                page_result.total_pages,
+                new_on_page,
+            )
 
-            # Защита от бесконечного цикла (максимум 10 страниц)
-            if page > 10:
-                logger.warning("Reached maximum page limit (10), stopping batch load")
-                break
+            collection_finished = page_result.raw_count == 0 or page >= page_result.total_pages
+            if collection_finished and self._collection_index + 1 >= len(collections):
+                # Конец полного прохода: попытка останавливается здесь и не
+                # начинает новый проход в остатке бюджета (design.md, Decision 2/6).
+                new_in_pass = self._new_in_pass
+                self._collection_index = 0
+                self._next_page = 1
+                self._new_in_pass = 0
+                return LoadBatchResult(loaded=loaded_count, stop_reason="pass_end", new_in_pass=new_in_pass)
 
-        logger.info(f"Successfully loaded {loaded_count} new movies")
-        return loaded_count
+            if collection_finished:
+                self._collection_index += 1
+                self._next_page = 1
+            else:
+                self._next_page = page + 1
 
     def cleanup_old_movies(self, db: Session) -> int:
         """
@@ -309,6 +357,67 @@ class MovieService:
         db.commit()
         logger.info(f"Cleaned up {len(movie_ids_to_delete)} old movies")
         return len(movie_ids_to_delete)
+
+    def _map_kinopoisk_movie_data(self, data: Dict, kinopoisk_id: int) -> Optional[Dict]:
+        """Маппит ответ Kinopoisk (формат `/films/{id}` и `/films/collections`,
+        поля совпадают — design.md, Context) в поля для создания `Movie`.
+
+        Используется и `fetch_movie_from_kinopoisk(full_data=True)`, и выборкой
+        страницы подборки, чтобы правила отбраковки не разъехались
+        (design.md, Decision 1).
+
+        Returns:
+            dict с полями `Movie` или None, если нет обязательных title/year.
+        """
+        # Название (обязательное)
+        title = data.get("nameRu") or data.get("nameEn") or data.get("nameOriginal") or ""
+        if not title:
+            logger.warning(f"No title found for movie {kinopoisk_id}")
+            return None
+
+        # Год (обязательное)
+        year = data.get("year")
+        if not year:
+            logger.warning(f"No year found for movie {kinopoisk_id}")
+            return None
+
+        # Жанр (обязательное) - берем первый жанр
+        genres = data.get("genres", [])
+        genre = "Неизвестно"
+        if genres and isinstance(genres, list) and len(genres) > 0:
+            if isinstance(genres[0], dict):
+                genre = genres[0].get("genre", "Неизвестно")
+            else:
+                genre = str(genres[0])
+
+        # Постер (обязательное, но может быть пустым)
+        poster_url = data.get("posterUrl", "")
+
+        # Описание (опциональное)
+        description = data.get("description")
+
+        # Рейтинг (опциональное)
+        rating = None
+        rating_value = data.get("rating") or data.get("ratingKinopoisk") or data.get("ratingImdb")
+        if rating_value:
+            try:
+                rating = float(rating_value)
+            except (ValueError, TypeError):
+                pass
+
+        # Оригинальное название (опциональное)
+        title_original = data.get("nameOriginal")
+
+        return {
+            "kinopoisk_id": kinopoisk_id,
+            "title": title,
+            "year": int(year),
+            "genre": genre,
+            "poster_url": poster_url,
+            "description": description,
+            "rating": rating,
+            "title_original": title_original,
+        }
 
     def fetch_movie_from_kinopoisk(self, kinopoisk_id: int, full_data: bool = False) -> Optional[Dict]:
         """
@@ -351,55 +460,7 @@ class MovieService:
                 
                 # Если нужны полные данные для создания фильма
                 if full_data:
-                    # Название (обязательное)
-                    title = data.get("nameRu") or data.get("nameEn") or data.get("nameOriginal") or ""
-                    if not title:
-                        logger.warning(f"No title found for movie {kinopoisk_id}")
-                        return None
-                    
-                    # Год (обязательное)
-                    year = data.get("year")
-                    if not year:
-                        logger.warning(f"No year found for movie {kinopoisk_id}")
-                        return None
-                    
-                    # Жанр (обязательное) - берем первый жанр
-                    genres = data.get("genres", [])
-                    genre = "Неизвестно"
-                    if genres and isinstance(genres, list) and len(genres) > 0:
-                        if isinstance(genres[0], dict):
-                            genre = genres[0].get("genre", "Неизвестно")
-                        else:
-                            genre = str(genres[0])
-                    
-                    # Постер (обязательное, но может быть пустым)
-                    poster_url = data.get("posterUrl", "")
-                    
-                    # Описание (опциональное)
-                    description = data.get("description")
-                    
-                    # Рейтинг (опциональное)
-                    rating = None
-                    rating_value = data.get("rating") or data.get("ratingKinopoisk") or data.get("ratingImdb")
-                    if rating_value:
-                        try:
-                            rating = float(rating_value)
-                        except (ValueError, TypeError):
-                            pass
-                    
-                    # Оригинальное название (опциональное)
-                    title_original = data.get("nameOriginal")
-                    
-                    return {
-                        "kinopoisk_id": kinopoisk_id,
-                        "title": title,
-                        "year": int(year),
-                        "genre": genre,
-                        "poster_url": poster_url,
-                        "description": description,
-                        "rating": rating,
-                        "title_original": title_original,
-                    }
+                    return self._map_kinopoisk_movie_data(data, kinopoisk_id)
                 else:
                     # Только поля для обновления существующего фильма
                     result = {}

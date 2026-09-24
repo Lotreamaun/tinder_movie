@@ -60,6 +60,24 @@ class Settings:
     ROOM_SESSION_GAP_HOURS: int = 24  # Простой группы, после которого сессия комнаты сбрасывается
     # Пауза перед повторной попыткой фоновой догрузки после пустого/неудачного результата
     CATALOG_GROWTH_COOLDOWN_MINUTES: int = 30
+    # Список подборок Kinopoisk для догрузки каталога, по порядку (сначала
+    # качественный топ, потом популярное); строка через запятую в env
+    # (design.md fix-catalog-growth-ceiling, Decision 2)
+    KINOPOISK_COLLECTIONS: list[str] = [
+        c.strip()
+        for c in os.getenv("KINOPOISK_COLLECTIONS", "TOP_250_MOVIES,TOP_POPULAR_MOVIES").split(",")
+        if c.strip()
+    ]
+    # Максимум страниц подборок, запрашиваемых за одну попытку догрузки —
+    # ограничивает расход квоты на попытку, не на весь проход (design.md,
+    # Decision 2)
+    CATALOG_GROWTH_MAX_PAGES: int = int(os.getenv("CATALOG_GROWTH_MAX_PAGES", "15"))
+    # Пауза перед новым проходом после того, как предыдущий полный проход
+    # всех подборок не нашёл ни одного нового фильма — подборки считаются
+    # исчерпанными (design.md, Decision 6). По умолчанию 168ч = 7 дней.
+    CATALOG_SOURCES_EXHAUSTED_COOLDOWN_HOURS: int = int(
+        os.getenv("CATALOG_SOURCES_EXHAUSTED_COOLDOWN_HOURS", "168")
+    )
 
 # Создаем экземпляр настроек
 settings = Settings()
