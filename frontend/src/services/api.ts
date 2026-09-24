@@ -175,14 +175,27 @@ api.interceptors.response.use(
 // =============================================================================
 
 /**
+ * Монотонный счётчик для одноразового параметра `_` в запросе фильма.
+ * Стартует от текущего времени, поэтому значения не повторяются и между перезагрузками.
+ */
+let movieRequestSeq = Date.now();
+
+/**
  * Получает следующий фильм с сервера.
  * Вне комнаты — случайный фильм; с roomCode — из общего колода комнаты.
+ *
+ * К URL добавляется одноразовый параметр `_`: два запроса «следующего фильма»
+ * никогда не совпадают побайтно. Без этого сетевой слой WebKit (Telegram на
+ * iPhone/macOS) склеивает одинаковые одновременные XHR-GET в один сетевой запрос
+ * и раздаёт всем вызовам одно тело ответа — очередь набиралась копиями одного
+ * фильма. Заодно страхует от кэширующих прокси (ngrok/CDN). Бэкенд лишний
+ * query-параметр игнорирует.
  */
 export async function getRandomMovie(params?: {
   roomCode?: string;
   telegramId?: number;
 }): Promise<Movie> {
-  const query: string[] = [];
+  const query: string[] = [`_=${++movieRequestSeq}`];
   const config: { headers?: Record<string, string> } = {};
 
   if (params?.roomCode) {
@@ -192,8 +205,7 @@ export async function getRandomMovie(params?: {
     config.headers = { 'telegram-id': params.telegramId.toString() };
   }
 
-  const url = query.length > 0 ? `/api/movies/random?${query.join('&')}` : '/api/movies/random';
-  return api.get(url, config);
+  return api.get(`/api/movies/random?${query.join('&')}`, config);
 }
 
 /**

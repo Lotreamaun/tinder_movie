@@ -1,5 +1,5 @@
 from typing import Annotated, Optional
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 from fastapi import Depends
 from fastapi import Header
 from uuid import UUID
@@ -21,6 +21,7 @@ router = APIRouter(prefix="/api/movies", tags=["movies"])
     500: {"description": "Внутренняя ошибка сервера"}
 })
 def get_random_movie(
+    response: Response,
     telegram_id: Annotated[Optional[int], Header(description="Telegram ID пользователя")] = None,
     room_code: Annotated[Optional[str], Query(
         description="Код комнаты: фильм выдаётся из общего колода комнаты (пример: ABC123)"
@@ -43,6 +44,10 @@ def get_random_movie(
     Raises:
         HTTPException: Если нет доступных фильмов или произошла ошибка
     """
+    # Каждый вызов продвигает курсор участника по колоде, то есть возвращает
+    # другой ресурс — ответ не должен переиспользоваться промежуточными кэшами.
+    response.headers["Cache-Control"] = "no-store"
+
     user = None
     if telegram_id is not None:
         user = user_service.get_user_by_telegram_id(db, telegram_id)

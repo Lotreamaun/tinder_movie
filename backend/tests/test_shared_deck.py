@@ -201,6 +201,25 @@ def test_outside_room_random_movie(client, db, make_movie):
     assert data["data"]["id"]
 
 
+def test_extra_cache_buster_param_is_ignored(client, db, make_user, make_movie, make_room):
+    """Одноразовый параметр `_` фронта (антисклейка запросов в WebKit) бэкенд игнорирует."""
+    u1 = make_user(1013)
+    make_user(1014)
+    room = make_room(u1, [1013, 1014])
+    for _ in range(3):
+        make_movie()
+
+    resp = client.get(
+        "/api/movies/random",
+        headers={"telegram-id": "1013"},
+        params={"room_code": room.id, "_": "123"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["data"]["id"]
+    # Эндпоинт по своей природе некэшируем: каждый вызов продвигает курсор участника
+    assert resp.headers["cache-control"] == "no-store"
+
+
 def test_room_code_requires_identity_and_membership(client, db, make_user, make_movie, make_room):
     u1 = make_user(1011)
     make_user(1012)

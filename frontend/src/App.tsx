@@ -9,6 +9,9 @@ import { preloadImage } from './utils/image';
 import './App.css';
 import type { Movie } from './types/movie_types';
 
+// Сколько фильмов набираем в очередь при старте
+const PRELOAD_COUNT = 5;
+
 function App() {
   // 1. Текущий фильм
   const [currentMovie, setCurrentMovie] = useState<Movie | null>(null);
@@ -44,6 +47,11 @@ function App() {
   // 9. Мэтч — фильм, по которому найден матч
   const [matchedMovie, setMatchedMovie] = useState<Movie | null>(null);
 
+  // 10. Монотонный счётчик показов — ключ MovieCard. С key={movie.id} повтор
+  //     фильма подряд не перемонтировал карточку: exit-анимация не играла и
+  //     нажатие визуально пропадало.
+  const [cardSeq, setCardSeq] = useState<number>(0);
+
   // Ref-копии — чтобы обработчики видели актуальные значения без пересоздания
   const movieQueueRef = useRef<Movie[]>(_movieQueue);
   const currentMovieRef = useRef<Movie | null>(currentMovie);
@@ -65,8 +73,25 @@ function App() {
     return movie;
   }, []);
 
+  // Пополнение очереди с дедупом по `id`: фильм, уже лежащий в очереди или
+  // показанный сейчас, в неё не добавляется — повтор не должен тратить нажатие.
+  const enqueueUnique = useCallback((movie: Movie) => {
+    setMovieQueue((queue) =>
+      queue.some((m) => m.id === movie.id) || currentMovieRef.current?.id === movie.id
+        ? queue
+        : [...queue, movie]
+    );
+  }, []);
+
   // Загружаем первый фильм и telegramId при монтировании компонента
   useEffect(() => {
+    // Флаг отмены запуска: cleanup эффекта помечает запуск отменённым.
+    // Нужен из-за двойного монтирования в StrictMode (dev): без него
+    // initializeApp отрабатывал дважды, и выброшенный набор очереди
+    // безвозвратно продвигал курсор участника по колоду комнаты
+    // (позиция двигается при выдаче фильма, а не при свайпе).
+    let cancelled = false;
+
     const initializeApp = async () => {
       try {
         // Блокируем вертикальные свайпы (сворачивание mini-app) — без этого
@@ -76,6 +101,7 @@ function App() {
         // 1. Ждём инициализацию Telegram WebApp SDK (короткий retry/таймаут),
         //    чтобы не показывать заглушку «Telegram ID not set» раньше времени.
         const tgUserId = await getTelegramUserId();
+        if (cancelled) return;
         setSdkInitDone(true);
 
         let resolvedId: number | null = null;
@@ -111,6 +137,7 @@ function App() {
         let currentRoomCode: string | null = null;
         if (resolvedId) {
           const room = await getMyRoom(resolvedId);
+          if (cancelled) return;
           if (room && room.participantIds) {
             setGroupParticipants(room.participantIds);
             currentRoomCode = room.roomCode ?? null;
@@ -122,37 +149,49 @@ function App() {
           }
         }
 
+        if (cancelled) return;
+
         setError(null);
         setIsLoading(true);
 
-        // 3. Загружаем 5 фильмов заранее (из общего колода комнаты, если она есть)
+        // 3. Набираем начальную очередь фильмов (из общего колода комнаты, если она есть).
+        //    Последовательно, а не через Promise.all: сетевой слой WebKit (Telegram на
+        //    iPhone/macOS) склеивает одинаковые одновременные XHR-GET в один запрос и
+        //    раздаёт всем вызовам одно тело ответа — очередь набиралась копиями одного
+        //    фильма. Выигрыша от параллелизма всё равно нет: бэкенд сериализует запросы
+        //    участника на `FOR UPDATE` строки колоды.
         const roomParams = currentRoomCode && resolvedId
           ? { roomCode: currentRoomCode, telegramId: resolvedId }
           : undefined;
-        const movies = await Promise.all([
-          getRandomMovie(roomParams),
-          getRandomMovie(roomParams),
-          getRandomMovie(roomParams),
-          getRandomMovie(roomParams),
-          getRandomMovie(roomParams),
-        ]);
-
-        movies.forEach((m) => preloadImage(m.posterUrl));
+        const movies: Movie[] = [];
+        for (let i = 0; i < PRELOAD_COUNT; i++) {
+          const movie = await getRandomMovie(roomParams);
+          if (cancelled) return;
+          // Дедуп по `id` — повтор в очередь не попадает
+          if (movies.some((m) => m.id === movie.id)) continue;
+          movies.push(movie);
+          preloadImage(movie.posterUrl);
+        }
 
         setMovieQueue(movies.slice(1));
-        setCurrentMovie(movies[0]);
+        setCurrentMovie(movies[0] ?? null);
         if (import.meta.env.DEV) {
           console.log('movie (first fetched):', movies[0]);
         }
       } catch (err) {
+        if (cancelled) return;
         console.error('Failed to initialize app:', err);
         setError(err instanceof ApiError ? err.message : 'Failed to initialize app');
       } finally {
-        setIsLoading(false);
+        if (!cancelled) setIsLoading(false);
       }
     };
 
     initializeApp();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Обработка свайпа: карточка уходит сразу (оптимистично), отправка — в фоне.
@@ -162,6 +201,10 @@ function App() {
 
     // Направление для exit-анимации вылета
     setExitDirection(swipeType === 'like' ? 'right' : 'left');
+
+    // Новый ключ карточки: смена происходит на каждом засчитанном свайпе,
+    // даже если следующий фильм совпал с текущим по `id`
+    setCardSeq((n) => n + 1);
 
     // Сразу показываем следующий фильм из очереди
     const queue = movieQueueRef.current;
@@ -173,7 +216,7 @@ function App() {
       // Дополняем очередь, если осталось мало
       if (rest.length < 3) {
         loadMoreMovies()
-          .then((m) => setMovieQueue((q) => [...q, m]))
+          .then(enqueueUnique)
           .catch((err) => console.error('Failed to prefetch next movie:', err));
       }
     } else {
@@ -216,7 +259,7 @@ function App() {
     } else if (tgId) {
       setError('Нужно минимум 2 участника в комнате для свайпов');
     }
-  }, [groupParticipants, loadMoreMovies]);
+  }, [groupParticipants, loadMoreMovies, enqueueUnique]);
 
   return (
     <div className="min-h-screen flex-1 flex flex-col bg-background text-foreground">
@@ -270,7 +313,7 @@ function App() {
               <AnimatePresence custom={exitDirection}>
                 {currentMovie && (
                   <MovieCard
-                    key={currentMovie.id}
+                    key={cardSeq}
                     movie={currentMovie}
                     onSwipe={handleSwipe}
                     exitDirection={exitDirection}
