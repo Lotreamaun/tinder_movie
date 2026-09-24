@@ -256,8 +256,9 @@ async def room_info(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             # Получаем информацию о комнате
             room_info_data = room_service.get_room_info(db, current_room.id)
 
-            # Формируем сообщение
-            message = f"🏠 Комната `{room_info_data['room_code']}`\n\n"
+            # Формируем сообщение (обычный текст — имя/юзернейм участника приходят
+            # от пользователя и не должны интерпретироваться как Markdown-разметка)
+            message = f"🏠 Комната {room_info_data['room_code']}\n\n"
             message += f"👥 Участники ({room_info_data['participants_count']}):\n"
 
             for participant in room_info_data['participants']:
@@ -268,7 +269,7 @@ async def room_info(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
             message += f"\n📅 Создана: {room_info_data['created_at'].strftime('%d.%m.%Y %H:%M')}"
 
-            await update.message.reply_text(message, parse_mode='Markdown')
+            await update.message.reply_text(message)
 
             logger.info("Room info shown for user %s, room %s", user.id, current_room.id)
 
